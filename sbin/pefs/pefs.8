@@ -85,7 +85,7 @@
 .Ar filesystem
 .Nm
 .Cm delchain
-.Op Fl fpv
+.Op Fl fFpv
 .Op Fl i Ar iterations
 .Op Fl k Ar keyfile
 .Ar filesystem
@@ -210,6 +210,9 @@ See
 section for more information.
 .It Cm delchain Ar filesystem
 Delete key chain element defined by parent key.
+Use
+.Fl F
+option to delete all elements from the chain.
 .It Cm randomchain Ar filesystem
 Create random key chain elements.
 Minimum and maximum number of elements is controlled by
@@ -259,6 +262,10 @@ Forces operation.
 Use to force
 .Cm unmount
 or to disable file system type check for key chain commands.
+.It Fl F
+Used with
+.Cm delchain
+command to delete all elements from a key chain.
 .It Fl k Ar keyfile
 Specifies a file which contains part of the key.
 If

@@ -23,28 +23,53 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  *
- * $FreeBSD$
  */
 
-#include <sys/queue.h>
+#include <sys/cdefs.h>
+__FBSDID("$FreeBSD$");
 
-#define PEFS_KEYCHAIN_DBFILE		".pefs"
+#include <sys/param.h>
+#include <sys/ioccom.h>
+#include <sys/module.h>
+#include <sys/mount.h>
 
-#define PEFS_KEYCHAIN_USE		0x0001
-#define PEFS_KEYCHAIN_IGNORE_MISSING	0x0002
+#include <assert.h>
+#include <ctype.h>
+#include <inttypes.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <errno.h>
+#include <unistd.h>
+#include <fcntl.h>
 
-struct pefs_keychain
+#include <fs/pefs/pefs.h>
+
+#include "pefs_ctl.h"
+
+int
+pefs_getfsroot(const char *path, int flags, char *fsroot, size_t size)
 {
-	TAILQ_ENTRY(pefs_keychain) kc_entry;
-	struct pefs_xkey kc_key;
-};
+	struct statfs fs;
+	const char *realfsroot;
 
-TAILQ_HEAD(pefs_keychain_head, pefs_keychain);
+	if (statfs(path, &fs) == -1) {
+		pefs_warn("statfs failed: %s: %s", path, strerror(errno));
+		return (PEFS_ERR_SYS);
+	}
 
-int	pefs_keychain_get(struct pefs_keychain_head *kch,
-	    const char *filesystem, int flags, struct pefs_xkey *xk);
-int	pefs_keychain_set(const char *filesystem, struct pefs_xkey *xk,
-	    struct pefs_xkey *xknext);
-int	pefs_keychain_del(const char *filesystem, int flags,
-		struct pefs_xkey *xk);
-void	pefs_keychain_free(struct pefs_keychain_head *kch);
+	realfsroot = fs.f_mntonname;
+	if (strcmp(PEFS_FSTYPE, fs.f_fstypename) != 0) {
+		if ((flags & PEFS_FS_IGNORE_TYPE) != 0) {
+			realfsroot = path;
+		} else {
+			pefs_warn("invalid filesystem type: %s", path);
+			return (PEFS_ERR_INVALID);
+		}
+	}
+
+	if (fsroot != NULL)
+		strlcpy(fsroot, realfsroot, size);
+
+	return (0);
+}

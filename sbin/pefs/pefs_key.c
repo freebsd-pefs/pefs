@@ -35,11 +35,8 @@ __FBSDID("$FreeBSD$");
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sysexits.h>
-#include <err.h>
 #include <unistd.h>
 #include <fcntl.h>
-#include <readpassphrase.h>
 
 #include <crypto/hmac/hmac_sha512.h>
 #include <fs/pefs/pefs.h>
@@ -48,8 +45,6 @@ __FBSDID("$FreeBSD$");
 #include <openssl/evp.h>
 
 #include "pefs_ctl.h"
-
-#define PEFS_KEY_PROMPT_DEFAULT			"passphrase"
 
 struct algorithm {
 	const char *name;
@@ -126,14 +121,30 @@ pefs_alg_lookup(struct pefs_xkey *xk, const char *algname)
 	return (-1);
 }
 
+uintmax_t
+pefs_keyid_as_int(char *keyid)
+{
+	uintmax_t r;
+	int i;
+
+	assert(sizeof(uintmax_t) >= PEFS_KEYID_SIZE);
+	for (i = 0, r = 0; i < PEFS_KEYID_SIZE; i++) {
+		if (i)
+			r <<= 8;
+		r |= keyid[i] & 0xff;
+	}
+
+	return (r);
+}
+
 int
-pefs_key_get(struct pefs_xkey *xk, const char *prompt, int verify,
+pefs_key_generate(struct pefs_xkey *xk, const char *passphrase,
     struct pefs_keyparam *kp)
 {
 	struct hmac_sha512_ctx ctx;
-	char promptbuf[64], buf[BUFSIZ], buf2[BUFSIZ], *p;
+	char buf[BUFSIZ];
 	ssize_t done;
-	int fd, i;
+	int fd;
 
 	xk->pxk_index = -1;
 	xk->pxk_alg = PEFS_ALG_DEFAULT;
@@ -141,9 +152,8 @@ pefs_key_get(struct pefs_xkey *xk, const char *prompt, int verify,
 
 	if (kp->kp_alg != NULL) {
 		if (pefs_alg_lookup(xk, kp->kp_alg) < 0) {
-			warnx("invalid algorithm %s", kp->kp_alg);
-			pefs_alg_list(stderr);
-			exit(EX_USAGE);
+			pefs_warn("invalid algorithm %s", kp->kp_alg);
+			return (PEFS_ERR_INVALID_ALG);
 		}
 	}
 
@@ -152,58 +162,43 @@ pefs_key_get(struct pefs_xkey *xk, const char *prompt, int verify,
 	if (kp->kp_keyfile != NULL && kp->kp_keyfile[0] == '\0')
 		kp->kp_keyfile = NULL;
 	if (kp->kp_keyfile == NULL && kp->kp_nopassphrase) {
-		warnx("no key components given");
-		pefs_usage();
+		pefs_warn("no key components given");
+		return (PEFS_ERR_USAGE);
 	}
 	if (kp->kp_keyfile != NULL) {
 		if (strcmp(kp->kp_keyfile, "-") == 0)
 			fd = STDIN_FILENO;
 		else {
 			fd = open(kp->kp_keyfile, O_RDONLY);
-			if (fd == -1)
-				err(EX_IOERR, "cannot open keyfile %s",
-				    kp->kp_keyfile);
+			if (fd == -1) {
+				pefs_warn("cannot open keyfile %s: %s",
+				    kp->kp_keyfile, strerror(errno));
+				return (PEFS_ERR_IO);
+			}
 		}
 		while ((done = read(fd, buf, sizeof(buf))) > 0)
 			hmac_sha512_update(&ctx, buf, done);
 		bzero(buf, sizeof(buf));
-		if (done == -1)
-			err(EX_IOERR, "cannot read keyfile %s", kp->kp_keyfile);
+		if (done == -1) {
+			pefs_warn("cannot read keyfile %s: %s",
+			    kp->kp_keyfile, strerror(errno));
+			return (PEFS_ERR_IO);
+		}
 		if (fd != STDIN_FILENO)
 			close(fd);
 	}
 
-	if (!kp->kp_nopassphrase) {
-		if (verify)
-			verify = 1;
-		if (prompt == NULL)
-			prompt = PEFS_KEY_PROMPT_DEFAULT;
-		for (i = 0; i <= verify; i++) {
-			snprintf(promptbuf, sizeof(promptbuf), "%s %s:",
-			    !i ? "Enter" : "Reenter", prompt);
-			p = readpassphrase(promptbuf, !i ? buf : buf2, BUFSIZ,
-			    RPP_ECHO_OFF | RPP_REQUIRE_TTY);
-			if (p == NULL || p[0] == '\0') {
-				bzero(buf, sizeof(buf));
-				bzero(buf2, sizeof(buf2));
-				errx(EX_DATAERR, "unable to read passphrase");
-			}
-		}
-		if (verify && strcmp(buf, buf2) != 0) {
-			bzero(buf, sizeof(buf));
-			bzero(buf2, sizeof(buf2));
-			errx(EX_DATAERR, "passphrases didn't match");
-		}
-		bzero(buf2, sizeof(buf2));
+	if (kp->kp_nopassphrase == 0) {
 		if (kp->kp_iterations == 0) {
-			hmac_sha512_update(&ctx, buf, strlen(buf));
+			hmac_sha512_update(&ctx, passphrase,
+			    strlen(passphrase));
 		} else {
-			pkcs5v2_genkey(xk->pxk_key, PEFS_KEY_SIZE, buf, 0, buf,
+			pkcs5v2_genkey(xk->pxk_key, PEFS_KEY_SIZE,
+			    passphrase, 0, passphrase,
 			    kp->kp_iterations);
 			hmac_sha512_update(&ctx, xk->pxk_key,
 			    PEFS_KEY_SIZE);
 		}
-		bzero(buf, sizeof(buf));
 	}
 	hmac_sha512_final(&ctx, xk->pxk_key, PEFS_KEY_SIZE);
 
@@ -243,7 +238,7 @@ pefs_key_cipher(struct pefs_xkeyenc *xe, int enc,
 		hmac_sha512_final(&hmac_ctx, mac, PEFS_KEYENC_MAC_SIZE);
 		bzero(&hmac_ctx, sizeof(hmac_ctx));
 		if (memcmp(mac, xe->ke_mac, PEFS_KEYENC_MAC_SIZE) != 0)
-			return (EINVAL);
+			return (PEFS_ERR_INVALID);
 	}
 
 	EVP_CIPHER_CTX_init(&ctx);
@@ -255,13 +250,13 @@ pefs_key_cipher(struct pefs_xkeyenc *xe, int enc,
 
 	if (EVP_CipherUpdate(&ctx, data, &outsize, data, datasize) == 0) {
 		EVP_CIPHER_CTX_cleanup(&ctx);
-		return (EINVAL);
+		return (PEFS_ERR_INVALID);
 	}
 	assert(outsize == (int)datasize);
 
 	if (EVP_CipherFinal_ex(&ctx, data + outsize, &outsize) == 0) {
 		EVP_CIPHER_CTX_cleanup(&ctx);
-		return (EINVAL);
+		return (PEFS_ERR_INVALID);
 	}
 	assert(outsize == 0);
 

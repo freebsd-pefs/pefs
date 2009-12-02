@@ -26,6 +26,8 @@
  * $FreeBSD$
  */
 
+#include <inttypes.h>
+
 #define PEFS_FSTYPE			"pefs"
 #define PEFS_KLD			PEFS_FSTYPE
 
@@ -38,6 +40,17 @@
 #define PEFS_RANDOMCHAIN_MAX		64
 
 #define PEFS_KEYENC_MAC_SIZE		(PEFS_KEY_SIZE / 2)
+
+#define PEFS_ERR_GENERIC		1
+#define PEFS_ERR_USAGE			2
+#define PEFS_ERR_IO			3
+#define PEFS_ERR_SYS			4
+#define PEFS_ERR_NOENT			5
+#define PEFS_ERR_EXIST			6
+#define PEFS_ERR_INVALID		7
+#define PEFS_ERR_INVALID_ALG		8
+
+#define PEFS_FS_IGNORE_TYPE		0x0001
 
 struct pefs_xkeyenc {
 	struct {
@@ -55,6 +68,21 @@ struct pefs_keyparam {
 	char *kp_alg;
 };
 
+void	pefs_warn(const char *, ...) __printf0like(1, 2);
+
+int	pefs_getfsroot(const char *path, int flags, char *fsroot, size_t size);
+
+int	pefs_key_generate(struct pefs_xkey *xk, const char *passphrase,
+	    struct pefs_keyparam *kp);
+int	pefs_key_encrypt(struct pefs_xkeyenc *xe,
+	    const struct pefs_xkey *xk_parent);
+int	pefs_key_decrypt(struct pefs_xkeyenc *xe,
+	    const struct pefs_xkey *xk_parent);
+uintmax_t	pefs_keyid_as_int(char *keyid);
+
+const char *	pefs_alg_name(struct pefs_xkey *xk);
+void	pefs_alg_list(FILE *stream);
+
 static inline void
 pefs_keyparam_init(struct pefs_keyparam *kp)
 {
@@ -63,16 +91,3 @@ pefs_keyparam_init(struct pefs_keyparam *kp)
 	kp->kp_keyfile = NULL;
 	kp->kp_alg = NULL;
 }
-
-void	pefs_usage(void);
-int	pefs_getfsroot(const char *path, char *fsroot, size_t size);
-int	pefs_key_get(struct pefs_xkey *xk, const char *prompt, int verify,
-    struct pefs_keyparam *kp);
-int	pefs_key_encrypt(struct pefs_xkeyenc *xe,
-    const struct pefs_xkey *xk_parent);
-int	pefs_key_decrypt(struct pefs_xkeyenc *xe,
-    const struct pefs_xkey *xk_parent);
-uintmax_t	pefs_keyid_as_int(char *keyid);
-const char *	pefs_alg_name(struct pefs_xkey *xk);
-void	pefs_alg_list(FILE *stream);
-

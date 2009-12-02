@@ -38,8 +38,6 @@ __FBSDID("$FreeBSD$");
 #include <db.h>
 #include <fcntl.h>
 #include <limits.h>
-#include <sysexits.h>
-#include <err.h>
 #include <errno.h>
 
 #include <fs/pefs/pefs.h>
@@ -47,21 +45,16 @@ __FBSDID("$FreeBSD$");
 #include "pefs_ctl.h"
 #include "pefs_keychain.h"
 
-#define KEYCHAIN_DBFILE			".pefs"
-
 static DB *
 keychain_dbopen(const char *filesystem, int kc_flags, int flags)
 {
 	char buf[MAXPATHLEN];
 	DB *db;
 
-	if (pefs_getfsroot(filesystem, buf, sizeof(buf)) != 0)
-		return (NULL);
-	strlcat(buf, "/", sizeof(buf));
-	strlcat(buf, KEYCHAIN_DBFILE, sizeof(buf));
+	snprintf(buf, sizeof(buf), "%s/%s", filesystem, PEFS_KEYCHAIN_DBFILE);
 	db = dbopen(buf, flags | O_EXLOCK, S_IRUSR | S_IWUSR, DB_BTREE, NULL);
 	if (db == NULL && (kc_flags & PEFS_KEYCHAIN_USE || errno != ENOENT))
-		warn("keychain %s", buf);
+		pefs_warn("key chain %s: %s", buf, strerror(errno));
 	return (db);
 }
 
@@ -82,7 +75,7 @@ pefs_keychain_free(struct pefs_keychain_head *kch)
 static int
 pefs_keychain_get_db(DB *db, struct pefs_keychain_head *kch)
 {
-	struct pefs_keychain *kc_parent = NULL, *kc;
+	struct pefs_keychain *kc_parent = NULL, *kc = NULL;
 	struct pefs_xkeyenc ke;
 	DBT db_key, db_data;
 	int error;
@@ -94,28 +87,38 @@ pefs_keychain_get_db(DB *db, struct pefs_keychain_head *kch)
 			    memcmp(kc->kc_key.pxk_keyid,
 			    kc_parent->kc_key.pxk_keyid,
 			    PEFS_KEYID_SIZE) == 0) {
-				pefs_keychain_free(kch);
-				errx(EX_DATAERR,
-				    "keychain: loop detected: %016jx",
+				pefs_warn("key chain loop detected: %016jx",
 				    pefs_keyid_as_int(kc->kc_key.pxk_keyid));
+				error = PEFS_ERR_INVALID;
+				break;
 			}
 		}
+		kc = NULL;
 		db_key.data = kc_parent->kc_key.pxk_keyid;
 		db_key.size = PEFS_KEYID_SIZE;
 		error = db->get(db, &db_key, &db_data, 0);
 		if (error != 0) {
-			if (error == -1)
-				warn("keychain");
+			if (error == -1) {
+				pefs_warn("key chain database error: %s",
+				    strerror(errno));
+				error = PEFS_ERR_SYS;
+			}
 			if (TAILQ_FIRST(kch) != kc_parent)
 				error = 0;
 			break;
 		}
-		if (db_data.size != sizeof(struct pefs_xkeyenc))
-			errx(EX_DATAERR, "keychain: db damaged");
+		if (db_data.size != sizeof(struct pefs_xkeyenc)) {
+			pefs_warn("key chain database damaged");
+			error = PEFS_ERR_INVALID;
+			break;
+		}
 
 		kc = calloc(1, sizeof(struct pefs_keychain));
-		if (kc == NULL)
-			err(EX_OSERR, "calloc");
+		if (kc == NULL) {
+			pefs_warn("calloc: %s", strerror(errno));
+			error = PEFS_ERR_SYS;
+			break;
+		}
 
 		memcpy(&ke, db_data.data, sizeof(struct pefs_xkeyenc));
 		error = pefs_key_decrypt(&ke, &kc_parent->kc_key);
@@ -124,26 +127,36 @@ pefs_keychain_get_db(DB *db, struct pefs_keychain_head *kch)
 		kc->kc_key = ke.a.ke_next;
 		kc_parent->kc_key.pxk_alg = le32toh(ke.a.ke_alg);
 		kc_parent->kc_key.pxk_keybits = le32toh(ke.a.ke_keybits);
-		if (pefs_alg_name(&kc_parent->kc_key) == NULL)
-			errx(EX_DATAERR, "keychain: db damaged");
+		if (pefs_alg_name(&kc_parent->kc_key) == NULL) {
+			pefs_warn("key chain database damaged");
+			error = PEFS_ERR_INVALID;
+			break;
+		}
 		kc->kc_key.pxk_index = -1;
 		kc->kc_key.pxk_alg = le32toh(kc->kc_key.pxk_alg);
 		kc->kc_key.pxk_keybits = le32toh(kc->kc_key.pxk_keybits);
 
 		if (kc->kc_key.pxk_alg == PEFS_ALG_INVALID ||
 		    pefs_alg_name(&kc->kc_key) == NULL) {
-			bzero(&kc->kc_key, sizeof(struct pefs_xkey));
-			if (kc->kc_key.pxk_alg != PEFS_ALG_INVALID)
-				warn("keychain %016jx -> %016jx: invalid algorithm (decyption failed)",
+			if (kc->kc_key.pxk_alg != PEFS_ALG_INVALID) {
+				error = PEFS_ERR_INVALID;
+				pefs_warn("key chain %016jx -> %016jx: "
+				    "invalid algorithm (decyption failed)",
 				    pefs_keyid_as_int(
-				    kc_parent->kc_key.pxk_keyid),
+					kc_parent->kc_key.pxk_keyid),
 				    pefs_keyid_as_int(kc->kc_key.pxk_keyid));
-			free(kc);
+			}
+			bzero(&kc->kc_key, sizeof(struct pefs_xkey));
 			break;
 		}
 		TAILQ_INSERT_TAIL(kch, kc, kc_entry);
+		kc = NULL;
 	}
 
+	if (error != 0 && kc != NULL) {
+		bzero(&kc->kc_key, sizeof(struct pefs_xkey));
+		free(kc);
+	}
 	return (error);
 }
 
@@ -160,8 +173,10 @@ pefs_keychain_get(struct pefs_keychain_head *kch, const char *filesystem,
 	TAILQ_INIT(kch);
 
 	kc = calloc(1, sizeof(struct pefs_keychain));
-	if (kc == NULL)
-		err(EX_OSERR, "calloc");
+	if (kc == NULL) {
+		pefs_warn("calloc: %s", strerror(errno));
+		return (PEFS_ERR_SYS);
+	}
 	kc->kc_key = *xk;
 	TAILQ_INSERT_HEAD(kch, kc, kc_entry);
 
@@ -172,17 +187,19 @@ pefs_keychain_get(struct pefs_keychain_head *kch, const char *filesystem,
 	if (db == NULL) {
 		if (flags & PEFS_KEYCHAIN_IGNORE_MISSING)
 			return (0);
-		return (ENOENT);
+		pefs_keychain_free(kch);
+		return (PEFS_ERR_NOENT);
 	}
 
 	error = pefs_keychain_get_db(db, kch);
 
 	db->close(db);
 
-	if (error) {
-		if (flags & PEFS_KEYCHAIN_USE)
-			errx(EX_DATAERR, "keychain: Key not found %016jx",
-			    pefs_keyid_as_int(xk->pxk_keyid));
+	if (error != 0 && (flags & PEFS_KEYCHAIN_USE) != 0) {
+		pefs_keychain_free(kch);
+		pefs_warn("key chain not found: %016jx",
+		    pefs_keyid_as_int(xk->pxk_keyid));
+		return (PEFS_ERR_NOENT);
 	}
 
 	return (0);
@@ -204,11 +221,11 @@ pefs_keychain_set(const char *filesystem, struct pefs_xkey *xk,
 	ke.a.ke_alg = htole32(xk->pxk_alg);
 	ke.a.ke_keybits = htole32(xk->pxk_keybits);
 	if (pefs_key_encrypt(&ke, xk) != 0)
-		return (-1);
+		return (PEFS_ERR_INVALID);
 
 	db = keychain_dbopen(filesystem, PEFS_KEYCHAIN_USE, O_RDWR | O_CREAT);
 	if (db == NULL)
-		return (-1);
+		return (PEFS_ERR_INVALID);
 
 	db_data.data = &ke;
 	db_data.size = sizeof(struct pefs_xkeyenc);
@@ -217,19 +234,23 @@ pefs_keychain_set(const char *filesystem, struct pefs_xkey *xk,
 	error = db->put(db, &db_key, &db_data, R_NOOVERWRITE);
 	bzero(&ke, sizeof(struct pefs_xkeyenc));
 	if (error != 0) {
-		if (error == -1)
-			warn("keychain");
-		else
-			warnx("keychain: cannot set key chain %016jx",
+		if (error == -1) {
+			error = PEFS_ERR_SYS;
+			pefs_warn("key chain database error: %s",
+			    strerror(errno));
+		} else {
+			error = PEFS_ERR_EXIST;
+			pefs_warn("key chain already exists: %016jx",
 			    pefs_keyid_as_int(xk->pxk_keyid));
+		}
 	}
 	db->close(db);
 
-	return (error ? -1 : 0);
+	return (error);
 }
 
 int
-pefs_keychain_del(const char *filesystem, struct pefs_xkey *xk)
+pefs_keychain_del(const char *filesystem, int flags, struct pefs_xkey *xk)
 {
 	DBT db_key;
 	DB *db;
@@ -242,14 +263,22 @@ pefs_keychain_del(const char *filesystem, struct pefs_xkey *xk)
 	db_key.size = PEFS_KEYID_SIZE;
 	error = db->del(db, &db_key, 0);
 	if (error != 0) {
-		if (error == -1)
-			warn("keychain");
-		else
-			warnx("keychain: cannot delete key chain %016jx",
-			    pefs_keyid_as_int(xk->pxk_keyid));
+		if (error == -1) {
+			error = PEFS_ERR_SYS;
+			pefs_warn("key chain database error: %s",
+			    strerror(errno));
+		} else {
+			if ((flags & PEFS_KEYCHAIN_IGNORE_MISSING) == 0) {
+				error = PEFS_ERR_NOENT;
+				pefs_warn("cannot delete key chain %016jx",
+				    pefs_keyid_as_int(xk->pxk_keyid));
+			} else {
+				error = 0;
+			}
+		}
 	}
 	db->close(db);
 
-	return (error ? -1 : 0);
+	return (error);
 }
 

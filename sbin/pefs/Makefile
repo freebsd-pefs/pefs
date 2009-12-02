@@ -4,7 +4,7 @@ SYS=	${.CURDIR}/../../sys
 .PATH:	${SYS}/geom/eli ${SYS}/crypto/hmac ${SYS}/crypto/sha2
 
 PROG=	pefs
-SRCS=	pefs_ctl.c pefs_key.c pefs_keychain.c
+SRCS=	pefs_ctl.c pefs_key.c pefs_keychain.c pefs_subr.c
 SRCS+=	hmac_sha512.c sha2.c
 SRCS+=	pkcs5v2.c
 
