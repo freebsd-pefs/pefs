@@ -11,5 +11,10 @@ DEBUG_FLAGS+= -g
 #DEBUG_FLAGS+= -DPEFS_DEBUG
 #DEBUG_FLAGS+= -DPEFS_DEBUG_EXTRA
 
+# Temporally build crypto/hmac and crypto/salsa20 into pefs module
+.PATH:	${.CURDIR}/../../crypto/hmac ${.CURDIR}/../../crypto/salsa20
+
+SRCS	+= salsa20.c hmac_sha512.c
+
 .include <bsd.kmod.mk>
 

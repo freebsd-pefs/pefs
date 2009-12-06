@@ -17,4 +17,6 @@ DEBUG_FLAGS+= -g
 DPADD=  ${LIBCRYPTO} ${LIBUTIL}
 LDADD=  -lcrypto -lutil
 
+BINDIR?= /sbin
+
 .include <bsd.prog.mk>

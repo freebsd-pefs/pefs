@@ -20,3 +20,12 @@ The following is a list of its most important features:
     stream cipher, PKCS#5v2 and HKDF for key generation.
 
 pefs blog: http://blogs.freebsdish.org/gleb/tag/pefs/
+
+
+Installation instructions:
+
+# git clone git://github.com/glk/pefs.git pefs
+# cd pefs
+# make obj all
+# make install
+# make clean
