@@ -19,7 +19,7 @@ The following is a list of its most important features:
 *   Uses modern cryptographic algorithms: AES and Camellia in CTR mode, Salsa20
     stream cipher, PKCS#5v2 and HKDF for key generation.
 
-pefs blog: http://blogs.freebsdish.org/gleb/tag/pefs/
+pefs blog: http://gleb.blog.com/tag/pefs/
 
 
 Installation instructions:
