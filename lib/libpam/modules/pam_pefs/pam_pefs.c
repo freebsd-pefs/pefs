@@ -105,22 +105,23 @@ pam_pefs_getkeys(struct pefs_keychain_head *kch,
 	int error;
 
 	error = pefs_getfsroot(homedir, 0, fsroot, sizeof(fsroot));
-	if (error != 0)
-		return (PAM_SYSTEM_ERR);
-	if (strcmp(fsroot, homedir) != 0) {
+	if (error != 0) {
+		pefs_warn("file system is not mounted: %s", homedir);
+		return (PAM_USER_UNKNOWN);
+	} if (strcmp(fsroot, homedir) != 0) {
 		pefs_warn("file system is not mounted on home dir: %s", fsroot);
-		return (PAM_SYSTEM_ERR);
+		return (PAM_USER_UNKNOWN);
 	}
 
 	error = pefs_key_generate(&k, passphrase, kp);
 	if (error != 0)
-		return (PAM_SYSTEM_ERR);
+		return (PAM_SERVICE_ERR);
 
 	error = pefs_keychain_get(kch, homedir, chainflags, &k);
 	bzero(&k, sizeof(k));
 	if (error != 0)
 		return (error == PEFS_ERR_NOENT ? PAM_AUTH_ERR :
-		    PAM_SYSTEM_ERR);
+		    PAM_SERVICE_ERR);
 
 	return (PAM_SUCCESS);
 
