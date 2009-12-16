@@ -221,13 +221,13 @@ pefs_mount(struct mount *mp)
 	 * Save reference.  Each mount also holds
 	 * a reference on the root vnode.
 	 */
+	vp = NULL;
 	error = pefs_node_get_nokey(mp, lowerrootvp, &vp);
 	/*
 	 * Make sure the node alias worked
 	 */
 	if (error != 0) {
-		VOP_UNLOCK(vp, 0);
-		vrele(lowerrootvp);
+		vput(lowerrootvp);
 		free(pm, M_PEFSMNT);
 		return (error);
 	}
