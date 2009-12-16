@@ -217,10 +217,14 @@ pefs_dircache_insert(struct pefs_dircache *pd, struct pefs_tkey *ptk,
 	struct pefs_dircache_listhead *head;
 	struct pefs_dircache_entry *pde;
 
-	MPASS(name_len <= MAXNAMLEN);
-	MPASS(encname_len <= PEFS_CACHENAME_MAXLEN);
 	MPASS(ptk->ptk_key != NULL);
 	sx_assert(&pd->pd_lock, SA_XLOCKED);
+
+	if (name_len >= sizeof(pde->pde_name) ||
+	    encname_len >= sizeof(pde->pde_encname)) {
+		panic("pefs: invalid file name length: %zd/%zd", name_len,
+		    encname_len);
+	}
 
 	pde = uma_zalloc(dircache_entry_zone, M_WAITOK | M_ZERO);
 	pde->pde_dircache = pd;
@@ -230,11 +234,13 @@ pefs_dircache_insert(struct pefs_dircache *pd, struct pefs_tkey *ptk,
 
 	pde->pde_namelen = name_len;
 	memcpy(pde->pde_name, name, name_len);
+	pde->pde_name[name_len] = '\0';
 	pde->pde_namehash = dircache_hashname(pd, pde->pde_name,
 	    pde->pde_namelen);
 
 	pde->pde_encnamelen = encname_len;
 	memcpy(pde->pde_encname, encname, encname_len);
+	pde->pde_encname[encname_len] = '\0';
 	pde->pde_encnamehash = dircache_hashname(pd, pde->pde_encname,
 	    pde->pde_encnamelen);
 
