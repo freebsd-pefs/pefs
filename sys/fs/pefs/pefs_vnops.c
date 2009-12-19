@@ -2011,8 +2011,10 @@ lower_update:
 	pefs_ctx_free(ctx);
 	pefs_chunk_free(&pc, pn);
 
-	MPASS(resid == uio->uio_resid);
-	MPASS(offset == uio->uio_offset);
+	if (error == 0) {
+		MPASS(resid == uio->uio_resid);
+		MPASS(offset == uio->uio_offset);
+	}
 
 	return (error);
 }
