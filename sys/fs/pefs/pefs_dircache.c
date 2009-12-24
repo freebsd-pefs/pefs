@@ -220,8 +220,8 @@ pefs_dircache_insert(struct pefs_dircache *pd, struct pefs_tkey *ptk,
 	MPASS(ptk->ptk_key != NULL);
 	sx_assert(&pd->pd_lock, SA_XLOCKED);
 
-	if (name_len >= sizeof(pde->pde_name) ||
-	    encname_len >= sizeof(pde->pde_encname)) {
+	if (name_len == 0 || name_len >= sizeof(pde->pde_name) ||
+	    encname_len == 0 || encname_len >= sizeof(pde->pde_encname)) {
 		panic("pefs: invalid file name length: %zd/%zd", name_len,
 		    encname_len);
 	}

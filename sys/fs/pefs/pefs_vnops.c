@@ -1309,9 +1309,10 @@ pefs_readdir_decrypt(struct pefs_dircache *pd, struct pefs_ctx *ctx,
 		cache = pefs_cache_dirent(pd, de, ctx, pk);
 		if (cache != NULL) {
 			/* Do not change d_reclen */
-			MPASS(cache->pde_namelen <= de->d_namlen);
-			memcpy(de->d_name, cache->pde_name, cache->pde_namelen + 1);
-			de->d_namlen = cache->pde_encnamelen;
+			MPASS(cache->pde_namelen + 1 <= de->d_namlen);
+			memcpy(de->d_name, cache->pde_name,
+			    cache->pde_namelen + 1);
+			de->d_namlen = cache->pde_namelen;
 		} else if (dflags & PN_HASKEY) {
 			*psize -= de->d_reclen;
 			memcpy(de, de_next, sz);
