@@ -336,6 +336,16 @@ Number of entries in directory cache.
 Directory cache is mainly used as a file name decryption cache, but can also be
 used to cache directory content if underlying file system is known to propagate
 changes to upper levels properly.
+.It Va vfs.pefs.dircache_size
+Dircache hash table size.
+Value can be set as a kernel environment variable by specifying it in
+.Ar /boot/loader.conf
+file, or using
+.Xr kenv 1
+utility
+before loading
+.Nm
+kernel module.
 .El
 .Sh EXAMPLES
 Encrypting a directory:
@@ -384,6 +394,7 @@ Thus it's strongly recommended to use addition data integrity checking tools.
 Key chain database file.
 .El
 .Sh SEE ALSO
+.Xr kenv 1 ,
 .Xr crypto 4 ,
 .Xr nullfs 5 ,
 .Xr geli 8 ,

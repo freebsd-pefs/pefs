@@ -51,6 +51,10 @@ __FBSDID("$FreeBSD$");
 #define DIRCACHE_ASSERT(pd)	MPASS(LIST_EMPTY(&(pd)->pd_heads[0]) || \
     LIST_EMPTY(&(pd)->pd_heads[1]))
 
+#define DIRCACHE_SIZE_ENV	"vfs.pefs.dircache_size"
+#define DIRCACHE_SIZE_MIN	512
+#define DIRCACHE_SIZE_DEFAULT	(desiredvnodes / 8)
+
 #define DIRCACHE_HEADOFF(pd)	(((pd)->pd_flags & PD_SWAPEDHEADS) ? 1 : 0)
 #define DIRCACHE_ACTIVEHEAD(pd)	(&(pd)->pd_heads[DIRCACHE_HEADOFF(pd) ^ 0])
 #define DIRCACHE_STALEHEAD(pd)	(&(pd)->pd_heads[DIRCACHE_HEADOFF(pd) ^ 1])
@@ -68,6 +72,10 @@ int pefs_dircache_enable = 1;
 SYSCTL_INT(_vfs_pefs, OID_AUTO, dircache_enable, CTLFLAG_RW,
     &pefs_dircache_enable, 0, "Enable dircache");
 
+static int dircache_size = 0;
+SYSCTL_INT(_vfs_pefs, OID_AUTO, dircache_size, CTLFLAG_RD,
+    &dircache_size, 0, "Number of dircache hash table entries");
+
 static int dircache_entries = 0;
 SYSCTL_INT(_vfs_pefs, OID_AUTO, dircache_entries, CTLFLAG_RD,
     &dircache_entries, 0, "Entries in dircache");
@@ -79,7 +87,10 @@ static void dircache_entry_free(struct pefs_dircache_entry *pde);
 void
 pefs_dircache_init(void)
 {
-	int elements;
+	getenv_int(DIRCACHE_SIZE_ENV, &dircache_size);
+
+	if (dircache_size < DIRCACHE_SIZE_MIN)
+		dircache_size = DIRCACHE_SIZE_DEFAULT;
 
 	dircache_zone = uma_zcreate("pefs_dircache",
 	    sizeof(struct pefs_dircache), NULL, NULL, NULL, NULL,
@@ -88,10 +99,9 @@ pefs_dircache_init(void)
 	    sizeof(struct pefs_dircache_entry), NULL, NULL, NULL,
 	    (uma_fini) bzero, UMA_ALIGN_PTR, 0);
 
-	elements = desiredvnodes / 8;
-	dircache_tbl = hashinit(elements, M_PEFSHASH,
+	dircache_tbl = hashinit(dircache_size, M_PEFSHASH,
 	    &pefs_dircache_hashmask);
-	dircache_enctbl = hashinit(elements, M_PEFSHASH,
+	dircache_enctbl = hashinit(dircache_size, M_PEFSHASH,
 	    &pefs_dircache_hashmask);
 	mtx_init(&dircache_mtx, "pefs_dircache_mtx", NULL, MTX_DEF);
 }
