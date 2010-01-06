@@ -325,17 +325,17 @@ Unlike
 .Nm
 doesn't recycle vnodes as early as possible, but expects kernel to recycle
 vnodes when necessary.
+.It Va vfs.pefs.dircache_enable
+Enable directory content caching.
+Content caching can only be enabled for file systems that are known to properly
+propagate changes to upper levels, and it's permanently disabled for the rest.
+When disabled directory cache subsystem is still used as a file name decryption
+cache for all underlying file systems.
 .It Va vfs.pefs.dircache_entries
 Number of entries in directory cache.
 Directory cache is mainly used as a file name decryption cache, but can also be
 used to cache directory content if underlying file system is known to propagate
 changes to upper levels properly.
-.It Va vfs.pefs.dircache_enable
-Enable directory content caching.
-Content caching can only be enabled for file systems that are known to properly
-propagate changes to upper levels, and it's permanently disabled for others.
-When disabled directory cache subsystem is still used as a file name decryption
-cache for all underlying file systems.
 .El
 .Sh EXAMPLES
 Encrypting a directory:
@@ -389,7 +389,7 @@ Key chain database file.
 .Xr geli 8 ,
 .Xr mount 8 ,
 .Xr sysctl 8
-.Xr umount 8 ,
+.Xr umount 8
 .Sh HISTORY
 The
 .Nm
