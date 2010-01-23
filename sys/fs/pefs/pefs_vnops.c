@@ -1756,12 +1756,14 @@ pefs_read(struct vop_read_args *ap)
 	struct pefs_node *pn = VP_TO_PN(vp);
 	struct pefs_chunk pc;
 	struct pefs_ctx *ctx;
+	struct sf_buf *sf;
 	vm_page_t m;
-	vm_offset_t moffset;
+	char *ma;
+	vm_offset_t moffset = 0;
 	u_quad_t fsize;
 	ssize_t bsize, msize, done;
 	int ioflag = ap->a_ioflag;
-	int error = 0, mapped, restart_decrypt;
+	int error = 0, mapped, nocopy, restart_decrypt;
 
 	if (vp->v_type == VDIR)
 		return (EISDIR);
@@ -1782,8 +1784,10 @@ pefs_read(struct vop_read_args *ap)
 
 	ctx = pefs_ctx_get();
 	pefs_chunk_create(&pc, pn, bsize);
+	nocopy = 0;
 	restart_decrypt = 1;
 	while (uio->uio_resid > 0 && uio->uio_offset < fsize) {
+		MPASS(nocopy == 0);
 		bsize = qmin(uio->uio_resid, bsize);
 		bsize = qmin(fsize - uio->uio_offset, bsize);
 		pefs_chunk_setsize(&pc, bsize);
@@ -1812,9 +1816,10 @@ lookupvpg:
 				restart_decrypt = 1;
 				continue;
 			} else if (m != NULL && uio->uio_segflg == UIO_NOCOPY) {
-				/* FIXME: UIO_NOCOPY is not supported */
-				VM_OBJECT_UNLOCK(vp->v_object);
-				return (EIO);
+				if (vm_page_sleep_if_busy(m, FALSE, "pefsmr"))
+					goto lookupvpg;
+				vm_page_busy(m);
+				nocopy = 1;
 			}
 			VM_OBJECT_UNLOCK(vp->v_object);
 			/* Page not cached. Make next read page-aligned. */
@@ -1839,9 +1844,29 @@ lookupvpg:
 			    uio->uio_offset);
 		}
 		pefs_data_decrypt_update(ctx, &pn->pn_tkey, &pc);
-		error = pefs_chunk_copy(&pc, uio);
-		if (error != 0)
-			break;
+		if (nocopy == 0) {
+			error = pefs_chunk_copy(&pc, uio);
+			if (error != 0)
+				break;
+		} else {
+			nocopy = 0;
+			sched_pin();
+			sf = sf_buf_alloc(m, SFB_CPUPRIVATE);
+			ma = (char *)sf_buf_kva(sf);
+			memcpy(ma + moffset, pc.pc_base, pc.pc_size);
+			uio->uio_offset += pc.pc_size;
+			uio->uio_resid -= pc.pc_size;
+			sf_buf_free(sf);
+			sched_unpin();
+			VM_OBJECT_LOCK(vp->v_object);
+			vm_page_wakeup(m);
+			VM_OBJECT_UNLOCK(vp->v_object);
+		}
+	}
+	if (nocopy != 0) {
+		VM_OBJECT_LOCK(vp->v_object);
+		vm_page_wakeup(m);
+		VM_OBJECT_UNLOCK(vp->v_object);
 	}
 	pefs_ctx_free(ctx);
 	pefs_chunk_free(&pc, pn);
