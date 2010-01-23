@@ -1382,7 +1382,9 @@ pefs_readdir(struct vop_readdir_args *ap)
 		pefs_readdir_decrypt(pn->pn_dircache, ctx, pn_key, pn->pn_flags,
 		    pc.pc_base, &mem_size);
 		pefs_chunk_setsize(&pc, mem_size);
-		pefs_chunk_copy(&pc, uio);
+		error = pefs_chunk_copy(&pc, uio);
+		if (error != 0)
+			break;
 		uio->uio_offset = puio->uio_offset;
 
 		/* Finish if there is no need to merge cookies */
@@ -1837,7 +1839,9 @@ lookupvpg:
 			    uio->uio_offset);
 		}
 		pefs_data_decrypt_update(ctx, &pn->pn_tkey, &pc);
-		pefs_chunk_copy(&pc, uio);
+		error = pefs_chunk_copy(&pc, uio);
+		if (error != 0)
+			break;
 	}
 	pefs_ctx_free(ctx);
 	pefs_chunk_free(&pc, pn);
@@ -1972,7 +1976,10 @@ lookupvpg:
 		} else {
 			pefs_chunk_setsize(&pc, bsize);
 		}
-		pefs_chunk_copy(&pc, uio);
+		MPASS(pc.pc_size <= uio->uio_resid);
+		error = pefs_chunk_copy(&pc, uio);
+		if (error != 0)
+			break;
 lower_update:
 		PEFSDEBUG("pefs_write: mapped=%d m=%d offset=0x%jx size=0x%jx\n",
 		    mapped, m != NULL, offset, (intmax_t)pc.pc_size);
@@ -2008,14 +2015,11 @@ lower_update:
 		MPASS(puio->uio_resid == 0);
 		resid -= pc.pc_size;
 		offset += pc.pc_size;
-	}
-	pefs_ctx_free(ctx);
-	pefs_chunk_free(&pc, pn);
-
-	if (error == 0) {
 		MPASS(resid == uio->uio_resid);
 		MPASS(offset == uio->uio_offset);
 	}
+	pefs_ctx_free(ctx);
+	pefs_chunk_free(&pc, pn);
 
 	return (error);
 }
