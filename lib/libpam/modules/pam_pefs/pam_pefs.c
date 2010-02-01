@@ -68,7 +68,7 @@ __FBSDID("$FreeBSD$");
 #define PAM_PEFS_OPT_IGNORE_MISSING	"ignore_missing"
 #define PAM_PEFS_KEYS			"pam_pefs_keys"
 
-static int pam_pefs_debug = 1;
+static int pam_pefs_debug;
 
 void
 pefs_warn(const char *fmt, ...)
@@ -124,7 +124,6 @@ pam_pefs_getkeys(struct pefs_keychain_head *kch,
 		    PAM_SERVICE_ERR);
 
 	return (PAM_SUCCESS);
-
 }
 
 static void
@@ -281,7 +280,7 @@ PAM_EXTERN int
 pam_sm_close_session(pam_handle_t *pamh __unused, int flags __unused,
     int argc __unused, const char *argv[] __unused)
 {
-	/* TODO Should remove added keys */
+
 	return (PAM_SUCCESS);
 }
 
