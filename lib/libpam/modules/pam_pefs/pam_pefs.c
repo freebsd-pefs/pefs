@@ -197,6 +197,8 @@ retry:
 
 		/* Switch back to arbitrator credentials */
 		openpam_restore_cred(pamh);
+	} else {
+		pam_err = PAM_AUTH_ERR;
 	}
 
 	/*
