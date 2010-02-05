@@ -373,7 +373,7 @@ Enter passphrase:
 \&...
 % pefs unmount ~/Private
 .Ed
-In the example key chain database file (~/Private/.pefs) is created on
+In the example key chain database file (~/Private/.pefs.db) is created on
 unencrypted underlying file.
 And 
 .Cm addkey Fl c
@@ -389,8 +389,8 @@ Because of using block ciphers in Counter (CTR) mode and stream ciphers
 attacker is able to flip arbitrary bits in encrypted file.
 Thus it's strongly recommended to use addition data integrity checking tools.
 .Sh FILES
-.Bl -tag -width <filesystem>/.pefs -compact
-.It Pa <filesystem>/.pefs
+.Bl -tag -width <filesystem>/.pefs.db -compact
+.It Pa <filesystem>/.pefs.db
 Key chain database file.
 .El
 .Sh SEE ALSO
