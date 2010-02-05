@@ -127,16 +127,22 @@ checkargs_fs(int argc, char **argv __unused)
 	return (1);
 }
 
-static int
-pefs_openfs(char *path)
+static void
+initfsroot(int argc, char **argv, int flags, char *fsroot, size_t size)
 {
-	char fsroot[MAXPATHLEN];
+	if (!checkargs_fs(argc, argv))
+		pefs_usage();
+
+	if (pefs_getfsroot(argv[0], flags, fsroot, size) != 0)
+		exit(PEFS_ERR_INVALID);
+}
+
+static int
+openx_rdonly(const char *path)
+{
 	int fd;
 
-	if (pefs_getfsroot(path, 0, fsroot, sizeof(fsroot)) != 0)
-		return (-1);
-
-	fd = open(fsroot, O_RDONLY);
+	fd = open(path, O_RDONLY);
 	if (fd == -1)
 		warn("cannot open %s", path);
 
@@ -163,13 +169,15 @@ pefs_readpassphrase(char *passphrase, int passphrase_sz, const char *prompt,
 		if (p == NULL || p[0] == '\0') {
 			bzero(buf, sizeof(buf));
 			bzero(buf2, sizeof(buf2));
-			errx(PEFS_ERR_INVALID, "unable to read passphrase");
+			warnx("unable to read passphrase");
+			return (PEFS_ERR_INVALID);
 		}
 	}
 	if (verify && strcmp(buf, buf2) != 0) {
 		bzero(buf, sizeof(buf));
 		bzero(buf2, sizeof(buf2));
-		errx(PEFS_ERR_INVALID, "passphrases didn't match");
+		warnx("passphrases didn't match");
+		return (PEFS_ERR_INVALID);
 	}
 	strlcpy(passphrase, buf, passphrase_sz);
 	bzero(buf2, sizeof(buf2));
@@ -193,9 +201,8 @@ pefs_key_get(struct pefs_xkey *xk, const char *prompt, int verify,
 
 	error = pefs_key_generate(xk, buf, kp);
 	bzero(buf, sizeof(buf));
-	if (error != 0)
-		exit(error);
-	return (0);
+
+	return (error);
 }
 
 static inline void
@@ -219,9 +226,30 @@ pefs_key_shownode(struct pefs_xkey *xk, const char *path)
 }
 
 static int
-pefs_keyop(keyop_func_t func, int argc, char *argv[])
+pefs_keychain_lookup(struct pefs_keychain_head *kch, const char *fsroot,
+    int chain_flags, struct pefs_keyparam *kp)
 {
 	struct pefs_xkey k;
+	int error;
+
+	error = pefs_keyparam_init(kp, fsroot);
+	if (error != 0)
+		return (error);
+	error = pefs_key_get(&k, NULL, 0, kp);
+	if (error != 0)
+		return (error);
+
+	error = pefs_keychain_get(kch, fsroot, chain_flags, &k);
+	bzero(&k, sizeof(k));
+	if (error)
+		return (PEFS_ERR_INVALID);
+
+	return (0);
+}
+
+static int
+pefs_keyop(keyop_func_t func, int argc, char *argv[])
+{
 	struct pefs_keychain_head kch;
 	struct pefs_keyparam kp;
 	char fsroot[MAXPATHLEN];
@@ -261,27 +289,17 @@ pefs_keyop(keyop_func_t func, int argc, char *argv[])
 	argc -= optind;
 	argv += optind;
 
-	if (!checkargs_fs(argc, argv)) {
-		bzero(&k, sizeof(k));
-		pefs_usage();
-	}
-	if (pefs_getfsroot(argv[0], 0, fsroot, sizeof(fsroot)) != 0)
-		return (PEFS_ERR_INVALID);
+	initfsroot(argc, argv, 0, fsroot, sizeof(fsroot));
 
-	error = pefs_keyparam_init(&kp, fsroot);
-	if (error != 0)
-		return (error);
-	error = pefs_key_get(&k, NULL, 0, &kp);
+	error = pefs_keychain_lookup(&kch, fsroot, chain, &kp);
 	if (error != 0)
 		return (error);
 
-	error = pefs_keychain_get(&kch, fsroot, chain, &k);
-	bzero(&k, sizeof(k));
-	if (error)
-		return (PEFS_ERR_INVALID);
-	fd = pefs_openfs(argv[0]);
-	if (fd == -1)
+	fd = openx_rdonly(fsroot);
+	if (fd == -1) {
+		pefs_keychain_free(&kch);
 		return (PEFS_ERR_IO);
+	}
 
 	error = func(&kch, fd, verbose);
 
@@ -386,39 +404,30 @@ pefs_setkey(int argc, char *argv[])
 	argc -= optind;
 	argv += optind;
 
-	if (chain == PEFS_KEYCHAIN_USE && addkey)
-		errx(PEFS_ERR_USAGE, "invalid argument combination: -x -c");
+	if (chain == PEFS_KEYCHAIN_USE && addkey) {
+		warnx("invalid argument combination: -x -c");
+		return (PEFS_ERR_USAGE);
+	}
 
 	if (argc != 1) {
 		if (argc == 0)
 			warnx("missing directory argument");
 		else
 			warnx("too many arguments");
-		bzero(&k, sizeof(k));
 		pefs_usage();
 	}
 
 	if (pefs_getfsroot(argv[0], 0, fsroot, sizeof(fsroot)) != 0)
 		return (PEFS_ERR_INVALID);
 
-	error = pefs_keyparam_init(&kp, fsroot);
+	error = pefs_keychain_lookup(&kch, fsroot, chain, &kp);
 	if (error != 0)
 		return (error);
-	error = pefs_key_get(&k, NULL, 0, &kp);
-	if (error != 0)
-		return (error);
-
-	error = pefs_keychain_get(&kch, fsroot, chain, &k);
-	bzero(k.pxk_key, PEFS_KEY_SIZE);
-	if (error)
-		return (PEFS_ERR_INVALID);
 	pefs_keychain_free(&kch);
 
-	fd = open(argv[0], O_RDONLY);
-	if (fd == -1) {
-		warn("cannot open %s", argv[0]);
+	fd = openx_rdonly(fsroot);
+	if (fd == -1)
 		return (PEFS_ERR_IO);
-	}
 
 	if (ioctl(fd, PEFS_SETKEY, &k) == -1) {
 		warn("cannot set key");
@@ -435,17 +444,17 @@ pefs_setkey(int argc, char *argv[])
 static int
 pefs_flushkeys(int argc, char *argv[])
 {
+	char fsroot[MAXPATHLEN];
 	int fd;
 
-	if (!checkargs_fs(argc, argv)) {
-		pefs_usage();
-	}
+	initfsroot(argc, argv, 0, fsroot, sizeof(fsroot));
 
-	fd = pefs_openfs(argv[0]);
+	fd = openx_rdonly(fsroot);
 	if (fd == -1)
 		return (PEFS_ERR_IO);
 	if (ioctl(fd, PEFS_FLUSHKEYS) == -1) {
-		err(PEFS_ERR_IO, "cannot flush keys");
+		warn("cannot flush keys");
+		return (PEFS_ERR_IO);
 	}
 	close(fd);
 
@@ -484,11 +493,9 @@ pefs_getkey(int argc, char *argv[])
 	if (pefs_getfsroot(argv[0], 0, NULL, 0) != 0)
 		return (PEFS_ERR_INVALID);
 
-	fd = open(argv[0], O_RDONLY);
-	if (fd == -1) {
-		warn("cannot open %s", argv[0]);
+	fd = openx_rdonly(argv[0]);
+	if (fd == -1)
 		return (PEFS_ERR_IO);
-	}
 
 	bzero(&k, sizeof(k));
 	if (ioctl(fd, PEFS_GETNODEKEY, &k) == -1) {
@@ -513,6 +520,7 @@ pefs_getkey(int argc, char *argv[])
 static int
 pefs_showkeys(int argc, char *argv[])
 {
+	char fsroot[MAXPATHLEN];
 	struct pefs_xkey k;
 	int testonly = 0;
 	int fd, i;
@@ -529,11 +537,9 @@ pefs_showkeys(int argc, char *argv[])
 	argc -= optind;
 	argv += optind;
 
-	if (!checkargs_fs(argc, argv)) {
-		pefs_usage();
-	}
+	initfsroot(argc, argv, 0, fsroot, sizeof(fsroot));
 
-	fd = pefs_openfs(argv[0]);
+	fd = openx_rdonly(fsroot);
 	if (fd == -1)
 		return (PEFS_ERR_IO);
 
@@ -545,8 +551,11 @@ pefs_showkeys(int argc, char *argv[])
 		}
 		if (errno == ENOENT)
 			printf("No keys specified\n");
-		else
-			err(PEFS_ERR_IO, "cannot list keys");
+		else {
+			warn("cannot list keys");
+			close(fd);
+			return (PEFS_ERR_IO);
+		}
 	} else {
 		if (testonly) {
 			close(fd);
@@ -576,9 +585,11 @@ pefs_mount(int argc, char *argv[])
 	while ((i = getopt(argc, argv, "t:")) != -1)
 		switch(i) {
 		case 't':
-			if (strcmp(optarg, PEFS_FSTYPE) != 0)
-				errx(PEFS_ERR_USAGE,
-				    "invalid filesystem type: %s", optarg);
+			if (strcmp(optarg, PEFS_FSTYPE) != 0) {
+				warnx("invalid filesystem type: %s",
+				    optarg);
+				return (PEFS_ERR_USAGE);
+			}
 			topt = 1;
 			break;
 		default:
@@ -597,8 +608,8 @@ pefs_mount(int argc, char *argv[])
 		nargv[i + shift + 1] = argv[i];
 	nargv[nargc - 1] = NULL;
 
-	if (execv(PATH_MOUNT, nargv) == -1)
-		errx(PEFS_ERR_SYS, "exec %s", PATH_MOUNT);
+	execv(PATH_MOUNT, nargv);
+	warnx("exec %s", PATH_MOUNT);
 
 	return (PEFS_ERR_SYS);
 }
@@ -621,9 +632,8 @@ pefs_unmount(int argc, char *argv[])
 	argc -= optind;
 	argv += optind;
 
-	if (!checkargs_fs(argc, argv)) {
+	if (!checkargs_fs(argc, argv))
 		pefs_usage();
-	}
 
 	nargv = malloc((argc + 2) * sizeof(*nargv));
 	for (i = 0; i < argc; i++)
@@ -631,8 +641,8 @@ pefs_unmount(int argc, char *argv[])
 	nargv[0] = __DECONST(char *, "pefs unmount");
 	nargv[argc + 1] = NULL;
 
-	if (execv(PATH_UMOUNT, nargv) == -1)
-		errx(PEFS_ERR_SYS, "exec %s", PATH_UMOUNT);
+	execv(PATH_UMOUNT, nargv);
+	warnx("exec %s", PATH_UMOUNT);
 
 	return (PEFS_ERR_SYS);
 }
@@ -699,17 +709,13 @@ pefs_addchain(int argc, char *argv[])
 	argc -= optind;
 	argv += optind;
 
-	if (optchainedkey && zerochainedkey)
-		errx(PEFS_ERR_USAGE, "invalid argument combination: -Z -%c",
+	if (optchainedkey && zerochainedkey) {
+		warnx("invalid argument combination: -Z -%c",
 		    optchainedkey);
-
-	if (!checkargs_fs(argc, argv)) {
-		bzero(p, sizeof(p));
-		pefs_usage();
+		return (PEFS_ERR_USAGE);
 	}
 
-	if (pefs_getfsroot(argv[0], fsflags, fsroot, sizeof(fsroot)) != 0)
-		return (PEFS_ERR_INVALID);
+	initfsroot(argc, argv, fsflags, fsroot, sizeof(fsroot));
 
 	error = pefs_keyparam_init(&p[0].kp, fsroot);
 	if (error != 0)
@@ -725,18 +731,18 @@ pefs_addchain(int argc, char *argv[])
 	}
 
 	if (zerochainedkey) {
-		fd = open(PATH_DEVRANDOM, O_RDONLY);
-		if (fd == -1)
-			err(PEFS_ERR_IO, "%s", PATH_DEVRANDOM);
+		fd = openx_rdonly(PATH_DEVRANDOM);
+		if (fd == -1) {
+			bzero(p, sizeof(p));
+			return (PEFS_ERR_IO);
+		}
 		read(fd, k2, sizeof(struct pefs_keychain));
 		close(fd);
 		k2->pxk_alg = PEFS_ALG_INVALID;
 		error = pefs_keychain_set(fsroot, k1, k2);
+		bzero(p, sizeof(p));
 		if (error)
 			return (PEFS_ERR_INVALID);
-		if (verbose) {
-		}
-
 		return (0);
 	}
 
@@ -753,25 +759,30 @@ pefs_addchain(int argc, char *argv[])
 			pefs_keychain_free(&kch);
 			bzero(k1->pxk_key, PEFS_KEY_SIZE);
 			bzero(k2->pxk_key, PEFS_KEY_SIZE);
-			errx(PEFS_ERR_INVALID,
-			    "key chain is already set: %016jx -> %016jx",
+			warnx("key chain is already set: %016jx -> %016jx",
 			    pefs_keyid_as_int(k1->pxk_keyid),
 			    pefs_keyid_as_int(k2->pxk_keyid));
+			pefs_keychain_free(&kch);
+			return (PEFS_ERR_INVALID);
 		}
 	}
 	kc = TAILQ_FIRST(&kch);
 	if (TAILQ_NEXT(kc, kc_entry) != NULL) {
 		bzero(k1->pxk_key, PEFS_KEY_SIZE);
 		bzero(k2->pxk_key, PEFS_KEY_SIZE);
-		warnx("key chain for parent key is already set: %016jx -> %016jx",
+		warnx("key chain for parent key is already set: "
+		    "%016jx -> %016jx",
 		    pefs_keyid_as_int(kc->kc_key.pxk_keyid),
 		    pefs_keyid_as_int(
 			TAILQ_NEXT(kc, kc_entry)->kc_key.pxk_keyid));
 		pefs_keychain_free(&kch);
-		exit(PEFS_ERR_INVALID);
+		return (PEFS_ERR_INVALID);
 	}
+	pefs_keychain_free(&kch);
 
 	error = pefs_keychain_set(fsroot, k1, k2);
+	bzero(k1->pxk_key, PEFS_KEY_SIZE);
+	bzero(k2->pxk_key, PEFS_KEY_SIZE);
 	if (error)
 		return (PEFS_ERR_INVALID);
 	if (verbose) {
@@ -790,7 +801,6 @@ pefs_addchain(int argc, char *argv[])
 static int
 pefs_delchain(int argc, char *argv[])
 {
-	struct pefs_xkey k;
 	struct pefs_keyparam kp;
 	struct pefs_keychain *kc, *kc_next;
 	struct pefs_keychain_head kch;
@@ -826,25 +836,11 @@ pefs_delchain(int argc, char *argv[])
 	argc -= optind;
 	argv += optind;
 
-	if (!checkargs_fs(argc, argv)) {
-		pefs_usage();
-	}
+	initfsroot(argc, argv, fsflags, fsroot, sizeof(fsroot));
 
-	if (pefs_getfsroot(argv[0], fsflags, fsroot, sizeof(fsroot)) != 0)
-		return (PEFS_ERR_INVALID);
-
-	error = pefs_keyparam_init(&kp, fsroot);
+	error = pefs_keychain_lookup(&kch, fsroot, PEFS_KEYCHAIN_USE, &kp);
 	if (error != 0)
 		return (error);
-	error = pefs_key_get(&k, NULL, 0, &kp);
-	if (error != 0)
-		return (error);
-
-	error = pefs_keychain_get(&kch, fsroot, PEFS_KEYCHAIN_USE, &k);
-	if (error) {
-		bzero(&k, sizeof(k));
-		return (PEFS_ERR_INVALID);
-	}
 
 	TAILQ_FOREACH(kc, &kch, kc_entry) {
 		kc_next = TAILQ_NEXT(kc, kc_entry);
@@ -874,7 +870,6 @@ pefs_delchain(int argc, char *argv[])
 static int
 pefs_showchains(int argc, char *argv[])
 {
-	struct pefs_xkey k;
 	struct pefs_keyparam kp;
 	struct pefs_keychain *kc;
 	struct pefs_keychain_head kch;
@@ -904,25 +899,11 @@ pefs_showchains(int argc, char *argv[])
 	argc -= optind;
 	argv += optind;
 
-	if (!checkargs_fs(argc, argv)) {
-		pefs_usage();
-	}
+	initfsroot(argc, argv, fsflags, fsroot, sizeof(fsroot));
 
-	if (pefs_getfsroot(argv[0], fsflags, fsroot, sizeof(fsroot)) != 0)
+	error = pefs_keychain_lookup(&kch, fsroot, PEFS_KEYCHAIN_USE, &kp);
+	if (error)
 		return (PEFS_ERR_INVALID);
-
-	error = pefs_keyparam_init(&kp, fsroot);
-	if (error != 0)
-		return (error);
-	error = pefs_key_get(&k, NULL, 0, &kp);
-	if (error != 0)
-		return (error);
-
-	error = pefs_keychain_get(&kch, fsroot, PEFS_KEYCHAIN_USE, &k);
-	bzero(&k, sizeof(k));
-	if (error) {
-		return (PEFS_ERR_INVALID);
-	}
 
 	printf("Key chain:\n");
 	i = 1;
@@ -973,24 +954,19 @@ pefs_randomchain(int argc, char *argv[])
 	argv += optind;
 
 	if (nmin >= nmax) {
-		errx(PEFS_ERR_USAGE,
-		    "invalid arguments: lower bound (%d) >= upper bound (%d)",
-		    nmin, nmax);
+		warnx("invalid arguments: "
+		    "lower bound (%d) >= upper bound (%d)", nmin, nmax);
+		return (PEFS_ERR_USAGE);
 	}
 
-	if (!checkargs_fs(argc, argv)) {
-		pefs_usage();
-	}
-
-	if (pefs_getfsroot(argv[0], fsflags, fsroot, sizeof(fsroot)) != 0)
-		return (PEFS_ERR_INVALID);
+	initfsroot(argc, argv, fsflags, fsroot, sizeof(fsroot));
 
 	n = arc4random_uniform(nmax - nmin) + nmin;
 	n /= 2;
 
-	fd = open(PATH_DEVRANDOM, O_RDONLY);
+	fd = openx_rdonly(PATH_DEVRANDOM);
 	if (fd == -1)
-		err(PEFS_ERR_IO, "%s", PATH_DEVRANDOM);
+		return (PEFS_ERR_IO);
 
 	for (i = 1; i <= n; i++) {
 		read(fd, k, sizeof(k));
