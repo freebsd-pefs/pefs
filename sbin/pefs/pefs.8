@@ -310,6 +310,29 @@ All elements are stored encrypted in a database file.
 Parent key fingerprint is used as an index to access child key in database.
 Chaining is achieved by reusing child key fingerprint as next index.
 .Pp
+.Ss CONFIGURATION FILE
+In addition to command line options some options can be specified in per file
+system configuration file:
+.Em <filesystem>/.pefs.conf .
+.Em .pefs.conf
+is not a regular file, but a symbolic link.
+.Dq Li Name
+of the file referenced by the link consists of a list of options separated by
+colon.
+Supported option list is the following:
+.Bd -literal -offset indent
+.Em algorithm:iterations
+.Ed
+.Pp
+Note that key chain database entries already contain algorithm used, and
+expected use of the configuration file is to specify
+.Em iterations
+option for
+.Xr pam_pefs 8
+or default
+.Em algorithm ,
+if one adds/removes keys often without using key chain database.
+.Pp
 .Sh SYSCTL VARIABLES
 The following
 .Xr sysctl 8
@@ -373,6 +396,7 @@ Enter passphrase:
 \&...
 % pefs unmount ~/Private
 .Ed
+.Pp
 In the example key chain database file (~/Private/.pefs.db) is created on
 unencrypted underlying file.
 And 
@@ -382,6 +406,13 @@ Key chain database file is not encrypted by
 .Nm ,
 but it's is internally encrypted by the utility and there should be no risk.
 .Pp
+Set default number of PKCS#5v2 iterations to 100000 for home directory not
+changing default algorithm:
+.Bd -literal -offset indent
+# make sure ~/ is not encrypted
+% ln -s :100000 ~/.pefs.conf
+.Ed
+.Pp
 .Sh DATA AUTHENTICATION
 .Nm
 provides no data integrity checking.
@@ -389,7 +420,9 @@ Because of using block ciphers in Counter (CTR) mode and stream ciphers
 attacker is able to flip arbitrary bits in encrypted file.
 Thus it's strongly recommended to use addition data integrity checking tools.
 .Sh FILES
-.Bl -tag -width <filesystem>/.pefs.db -compact
+.Bl -tag -width <filesystem>/.pefs.conf -compact
+.It Pa <filesystem>/.pefs.conf
+Configuration file (symbolic link).
 .It Pa <filesystem>/.pefs.db
 Key chain database file.
 .El

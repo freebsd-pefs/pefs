@@ -28,8 +28,6 @@
 
 #include <sys/queue.h>
 
-#define PEFS_KEYCHAIN_DBFILE		".pefs.db"
-
 #define PEFS_KEYCHAIN_USE		0x0001
 #define PEFS_KEYCHAIN_IGNORE_MISSING	0x0002
 

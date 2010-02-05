@@ -51,7 +51,7 @@ keychain_dbopen(const char *filesystem, int kc_flags, int flags)
 	char buf[MAXPATHLEN];
 	DB *db;
 
-	snprintf(buf, sizeof(buf), "%s/%s", filesystem, PEFS_KEYCHAIN_DBFILE);
+	snprintf(buf, sizeof(buf), "%s/%s", filesystem, PEFS_FILE_KEYCHAIN);
 	db = dbopen(buf, flags | O_EXLOCK, S_IRUSR | S_IWUSR, DB_BTREE, NULL);
 	if (db == NULL && (kc_flags & PEFS_KEYCHAIN_USE || errno != ENOENT))
 		pefs_warn("key chain %s: %s", buf, strerror(errno));

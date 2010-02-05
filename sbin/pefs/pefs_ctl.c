@@ -60,6 +60,7 @@ __FBSDID("$FreeBSD$");
 #define PEFS_KEY_PROMPT_DEFAULT			"passphrase"
 
 static void	pefs_usage(void);
+static void	pefs_usage_alg(void);
 static int	pefs_mount(int argc, char *argv[]);
 static int	pefs_unmount(int argc, char *argv[]);
 static int	pefs_addkey(int argc, char *argv[]);
@@ -192,14 +193,6 @@ pefs_key_get(struct pefs_xkey *xk, const char *prompt, int verify,
 
 	error = pefs_key_generate(xk, buf, kp);
 	bzero(buf, sizeof(buf));
-	switch (error) {
-	case PEFS_ERR_INVALID_ALG:
-		pefs_alg_list(stderr);
-		break;
-	case PEFS_ERR_USAGE:
-		pefs_usage();
-		break;
-	}
 	if (error != 0)
 		exit(error);
 	return (0);
@@ -236,11 +229,12 @@ pefs_keyop(keyop_func_t func, int argc, char *argv[])
 	int chain = PEFS_KEYCHAIN_IGNORE_MISSING;
 	int verbose = 0;
 
-	pefs_keyparam_init(&kp);
+	pefs_keyparam_create(&kp);
 	while ((i = getopt(argc, argv, "cCpva:i:k:")) != -1)
 		switch(i) {
 		case 'a':
-			kp.kp_alg = optarg;
+			if (pefs_keyparam_setalg(&kp, optarg) != 0)
+				pefs_usage_alg();
 			break;
 		case 'c':
 			chain = PEFS_KEYCHAIN_USE;
@@ -252,12 +246,8 @@ pefs_keyop(keyop_func_t func, int argc, char *argv[])
 			kp.kp_nopassphrase = 1;
 			break;
 		case 'i':
-			kp.kp_iterations = atoi(optarg);
-			if (kp.kp_iterations <= 0) {
-				warnx("invalid iterations argument: %s",
-				    optarg);
+			if (pefs_keyparam_setiterations(&kp, optarg) != 0)
 				pefs_usage();
-			}
 			break;
 		case 'k':
 			kp.kp_keyfile = optarg;
@@ -278,6 +268,9 @@ pefs_keyop(keyop_func_t func, int argc, char *argv[])
 	if (pefs_getfsroot(argv[0], 0, fsroot, sizeof(fsroot)) != 0)
 		return (PEFS_ERR_INVALID);
 
+	error = pefs_keyparam_init(&kp, fsroot);
+	if (error != 0)
+		return (error);
 	error = pefs_key_get(&k, NULL, 0, &kp);
 	if (error != 0)
 		return (error);
@@ -358,7 +351,7 @@ pefs_setkey(int argc, char *argv[])
 	int addkey = 0;
 	int chain = PEFS_KEYCHAIN_IGNORE_MISSING;
 
-	pefs_keyparam_init(&kp);
+	pefs_keyparam_create(&kp);
 	while ((i = getopt(argc, argv, "cCpvxa:i:k:")) != -1)
 		switch(i) {
 		case 'v':
@@ -368,7 +361,8 @@ pefs_setkey(int argc, char *argv[])
 			addkey = 1;
 			break;
 		case 'a':
-			kp.kp_alg = optarg;
+			if (pefs_keyparam_setalg(&kp, optarg) != 0)
+				pefs_usage_alg();
 			break;
 		case 'c':
 			chain = PEFS_KEYCHAIN_USE;
@@ -380,12 +374,8 @@ pefs_setkey(int argc, char *argv[])
 			kp.kp_nopassphrase = 1;
 			break;
 		case 'i':
-			kp.kp_iterations = atoi(optarg);
-			if (kp.kp_iterations <= 0) {
-				warnx("invalid iterations argument: %s",
-				    optarg);
+			if (pefs_keyparam_setiterations(&kp, optarg) != 0)
 				pefs_usage();
-			}
 			break;
 		case 'k':
 			kp.kp_keyfile = optarg;
@@ -411,6 +401,9 @@ pefs_setkey(int argc, char *argv[])
 	if (pefs_getfsroot(argv[0], 0, fsroot, sizeof(fsroot)) != 0)
 		return (PEFS_ERR_INVALID);
 
+	error = pefs_keyparam_init(&kp, fsroot);
+	if (error != 0)
+		return (error);
 	error = pefs_key_get(&k, NULL, 0, &kp);
 	if (error != 0)
 		return (error);
@@ -659,8 +652,8 @@ pefs_addchain(int argc, char *argv[])
 	int zerochainedkey = 0, optchainedkey = 0;
 	int error, i, fd;
 
-	pefs_keyparam_init(&p[0].kp);
-	pefs_keyparam_init(&p[1].kp);
+	pefs_keyparam_create(&p[0].kp);
+	pefs_keyparam_create(&p[1].kp);
 	while ((i = getopt(argc, argv, "a:A:i:I:k:K:fpPvZ")) != -1)
 		switch(i) {
 		case 'v':
@@ -676,7 +669,9 @@ pefs_addchain(int argc, char *argv[])
 		case 'A':
 			if (isupper(i))
 				optchainedkey = i;
-			p[isupper(i) ? 1 : 0].kp.kp_alg = optarg;
+			if (pefs_keyparam_setalg(
+			    &p[isupper(i) ? 1 : 0].kp, optarg) != 0)
+				pefs_usage_alg();
 			break;
 		case 'p':
 		case 'P':
@@ -688,12 +683,9 @@ pefs_addchain(int argc, char *argv[])
 		case 'I':
 			if (isupper(i))
 				optchainedkey = i;
-			if ((p[isupper(i) ? 1 : 0].kp.kp_iterations =
-			    atoi(optarg)) <= 0) {
-				warnx("invalid iterations argument: %s",
-				    optarg);
+			if (pefs_keyparam_setiterations(
+			    &p[isupper(i) ? 1 : 0].kp, optarg) != 0)
 				pefs_usage();
-			}
 			break;
 		case 'k':
 		case 'K':
@@ -718,6 +710,13 @@ pefs_addchain(int argc, char *argv[])
 
 	if (pefs_getfsroot(argv[0], fsflags, fsroot, sizeof(fsroot)) != 0)
 		return (PEFS_ERR_INVALID);
+
+	error = pefs_keyparam_init(&p[0].kp, fsroot);
+	if (error != 0)
+		return (error);
+	error = pefs_keyparam_init(&p[1].kp, fsroot);
+	if (error != 0)
+		return (error);
 
 	error = pefs_key_get(k1, "parent key passphrase", 1, &p[0].kp);
 	if (error != 0) {
@@ -799,7 +798,7 @@ pefs_delchain(int argc, char *argv[])
 	int deleteall = 0, fsflags = 0, verbose = 0;
 	int error, i;
 
-	pefs_keyparam_init(&kp);
+	pefs_keyparam_create(&kp);
 	while ((i = getopt(argc, argv, "fFvpi:k:")) != -1)
 		switch(i) {
 		case 'f':
@@ -815,12 +814,8 @@ pefs_delchain(int argc, char *argv[])
 			kp.kp_nopassphrase = 1;
 			break;
 		case 'i':
-			kp.kp_iterations = atoi(optarg);
-			if (kp.kp_iterations <= 0) {
-				warnx("invalid iterations argument: %s",
-				    optarg);
+			if (pefs_keyparam_setiterations(&kp, optarg) != 0)
 				pefs_usage();
-			}
 			break;
 		case 'k':
 			kp.kp_keyfile = optarg;
@@ -838,6 +833,9 @@ pefs_delchain(int argc, char *argv[])
 	if (pefs_getfsroot(argv[0], fsflags, fsroot, sizeof(fsroot)) != 0)
 		return (PEFS_ERR_INVALID);
 
+	error = pefs_keyparam_init(&kp, fsroot);
+	if (error != 0)
+		return (error);
 	error = pefs_key_get(&k, NULL, 0, &kp);
 	if (error != 0)
 		return (error);
@@ -884,7 +882,7 @@ pefs_showchains(int argc, char *argv[])
 	int fsflags = 0;
 	int error, i;
 
-	pefs_keyparam_init(&kp);
+	pefs_keyparam_create(&kp);
 	while ((i = getopt(argc, argv, "fpi:k:")) != -1)
 		switch(i) {
 		case 'f':
@@ -894,12 +892,8 @@ pefs_showchains(int argc, char *argv[])
 			kp.kp_nopassphrase = 1;
 			break;
 		case 'i':
-			kp.kp_iterations = atoi(optarg);
-			if (kp.kp_iterations <= 0) {
-				warnx("invalid iterations argument: %s",
-				    optarg);
+			if (pefs_keyparam_setiterations(&kp, optarg) != 0)
 				pefs_usage();
-			}
 			break;
 		case 'k':
 			kp.kp_keyfile = optarg;
@@ -917,6 +911,9 @@ pefs_showchains(int argc, char *argv[])
 	if (pefs_getfsroot(argv[0], fsflags, fsroot, sizeof(fsroot)) != 0)
 		return (PEFS_ERR_INVALID);
 
+	error = pefs_keyparam_init(&kp, fsroot);
+	if (error != 0)
+		return (error);
 	error = pefs_key_get(&k, NULL, 0, &kp);
 	if (error != 0)
 		return (error);
@@ -1023,6 +1020,12 @@ pefs_showalgs(int argc, char *argv[] __unused)
 	return (0);
 }
 
+static void
+pefs_usage_alg(void)
+{
+	pefs_alg_list(stderr);
+	exit(PEFS_ERR_USAGE);
+}
 
 static void
 pefs_usage(void)

@@ -97,10 +97,10 @@ pefs_warn(const char *fmt, ...)
  */
 static int
 pam_pefs_getkeys(struct pefs_keychain_head *kch,
-    const char *homedir, const char *passphrase,
-    struct pefs_keyparam *kp, int chainflags)
+    const char *homedir, const char *passphrase, int chainflags)
 {
 	struct pefs_xkey k;
+	struct pefs_keyparam kp;
 	char fsroot[MAXPATHLEN];
 	int error;
 
@@ -113,7 +113,10 @@ pam_pefs_getkeys(struct pefs_keychain_head *kch,
 		return (PAM_USER_UNKNOWN);
 	}
 
-	error = pefs_key_generate(&k, passphrase, kp);
+	pefs_keyparam_create(&kp);
+	pefs_keyparam_init(&kp, homedir);
+
+	error = pefs_key_generate(&k, passphrase, &kp);
 	if (error != 0)
 		return (PAM_SERVICE_ERR);
 
@@ -140,7 +143,6 @@ pam_sm_authenticate(pam_handle_t *pamh, int flags __unused,
     int argc __unused, const char *argv[] __unused)
 {
 	struct pefs_keychain_head *kch;
-	struct pefs_keyparam kp;
 	struct passwd *pwd;
 	const char *passphrase, *user;
 	const void *item;
@@ -165,9 +167,6 @@ pam_sm_authenticate(pam_handle_t *pamh, int flags __unused,
 	canretry = (pam_get_item(pamh, PAM_AUTHTOK, &item) == PAM_SUCCESS &&
 	    item != NULL && chainflags != PEFS_KEYCHAIN_IGNORE_MISSING);
 
-	/* TODO Add iterations and keyfile options */
-	pefs_keyparam_init(&kp);
-
 retry:
 	/* Get passphrase */
 	pam_err = pam_get_authtok(pamh, PAM_AUTHTOK,
@@ -185,7 +184,7 @@ retry:
 		if (pam_err != PAM_SUCCESS)
 			return (pam_err);
 
-		pam_err = pam_pefs_getkeys(kch, pwd->pw_dir, passphrase, &kp,
+		pam_err = pam_pefs_getkeys(kch, pwd->pw_dir, passphrase,
 		    chainflags);
 		if (pam_err == PAM_SUCCESS)
 			pam_set_data(pamh, PAM_PEFS_KEYS, kch,

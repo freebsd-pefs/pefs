@@ -28,6 +28,7 @@
 #include <sys/cdefs.h>
 __FBSDID("$FreeBSD$");
 
+#include <sys/param.h>
 #include <sys/types.h>
 #include <sys/errno.h>
 #include <assert.h>
@@ -105,20 +106,93 @@ pefs_alg_list(FILE *stream)
 	}
 }
 
-static int
-pefs_alg_lookup(struct pefs_xkey *xk, const char *algname)
+
+int
+pefs_keyparam_setalg(struct pefs_keyparam *kp, const char *algname)
 {
 	struct algorithm *alg;
 
 	for (alg = algs; alg->name != NULL; alg++) {
 		if (strcmp(algname, alg->name) == 0) {
-			xk->pxk_alg = alg->id;
-			xk->pxk_keybits = alg->keybits;
-			return (alg->id);
+			kp->kp_alg = alg->id;
+			kp->kp_keybits = alg->keybits;
+			return (0);
 		}
 	}
 
-	return (-1);
+	pefs_warn("invalid algorithm %s", algname);
+	return (PEFS_ERR_INVALID);
+}
+
+int
+pefs_keyparam_setiterations(struct pefs_keyparam *kp, const char *arg)
+{
+	kp->kp_iterations = atoi(arg);
+	if (kp->kp_iterations < 0) {
+		pefs_warn("invalid iterations number: %s", arg);
+		return (PEFS_ERR_INVALID);
+	}
+
+	return (0);
+}
+
+static int
+pefs_keyparam_handle(struct pefs_keyparam *kp, int ind, const char *param)
+{
+	int err;
+
+	if (*param == '\0')
+		return (0);
+
+	switch (ind) {
+	case PEFS_KEYCONF_ALG_IND:
+		err = pefs_keyparam_setalg(kp, param);
+		break;
+	case PEFS_KEYCONF_ITERATIONS_IND:
+		err = pefs_keyparam_setiterations(kp, param);
+		break;
+	default:
+		pefs_warn("invalid configuration option at position %d: %s",
+		    ind + 1, param);
+		err = PEFS_ERR_USAGE;
+	}
+
+	return (err);
+}
+
+int
+pefs_keyparam_init(struct pefs_keyparam *kp, const char *fsroot)
+{
+	char conffile[MAXPATHLEN];
+	char buf[BUFSIZ];
+	char *s, *e;
+	int ind, err;
+	ssize_t bufsz;
+
+	snprintf(conffile, sizeof(conffile), "%s/%s", fsroot,
+	    PEFS_FILE_KEYCONF);
+	bufsz = readlink(conffile, buf, sizeof(buf));
+	if (bufsz > 0 && bufsz < (ssize_t)sizeof(buf)) {
+		buf[bufsz] = '\0';
+		e = buf;
+		for (ind = 0; e != NULL; ind++) {
+			s = e;
+			e = strchr(s, ':');
+			if (e != NULL)
+				*(e++) = '\0';
+			err = pefs_keyparam_handle(kp, ind, s);
+			if (err != 0)
+				return (err);
+		}
+	}
+	if (kp->kp_iterations < 0)
+		kp->kp_iterations = PEFS_KDF_ITERATIONS;
+	if (kp->kp_alg <= 0) {
+		kp->kp_alg = PEFS_ALG_DEFAULT;
+		kp->kp_keybits = PEFS_ALG_DEFAULT_KEYBITS;
+	}
+
+	return (0);
 }
 
 uintmax_t
@@ -146,16 +220,15 @@ pefs_key_generate(struct pefs_xkey *xk, const char *passphrase,
 	ssize_t done;
 	int fd;
 
-	xk->pxk_index = -1;
-	xk->pxk_alg = PEFS_ALG_DEFAULT;
-	xk->pxk_keybits = PEFS_ALG_DEFAULT_KEYBITS;
-
-	if (kp->kp_alg != NULL) {
-		if (pefs_alg_lookup(xk, kp->kp_alg) < 0) {
-			pefs_warn("invalid algorithm %s", kp->kp_alg);
-			return (PEFS_ERR_INVALID_ALG);
-		}
+	if (kp->kp_alg <= 0 || kp->kp_keybits <= 0 ||
+	    kp->kp_iterations < 0) {
+		pefs_warn("key parameters are not initialized");
+		return (PEFS_ERR_INVALID);
 	}
+
+	xk->pxk_index = -1;
+	xk->pxk_alg = kp->kp_alg;
+	xk->pxk_keybits = kp->kp_keybits;
 
 	hmac_sha512_init(&ctx, NULL, 0);
 
@@ -182,6 +255,7 @@ pefs_key_generate(struct pefs_xkey *xk, const char *passphrase,
 		if (done == -1) {
 			pefs_warn("cannot read keyfile %s: %s",
 			    kp->kp_keyfile, strerror(errno));
+			bzero(&ctx, sizeof(ctx));
 			return (PEFS_ERR_IO);
 		}
 		if (fd != STDIN_FILENO)
@@ -205,6 +279,8 @@ pefs_key_generate(struct pefs_xkey *xk, const char *passphrase,
 	hmac_sha512_init(&ctx, xk->pxk_key, PEFS_KEY_SIZE);
 	hmac_sha512_update(&ctx, magic_keyid_info, sizeof(magic_keyid_info));
 	hmac_sha512_final(&ctx, xk->pxk_keyid, PEFS_KEYID_SIZE);
+
+	bzero(&ctx, sizeof(ctx));
 
 	return (0);
 }

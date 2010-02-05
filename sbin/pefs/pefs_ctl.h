@@ -36,6 +36,12 @@
 
 #define PEFS_KDF_ITERATIONS		50000
 
+#define PEFS_FILE_KEYCHAIN		".pefs.db"
+#define PEFS_FILE_KEYCONF		".pefs.conf"
+
+#define PEFS_KEYCONF_ALG_IND		0
+#define PEFS_KEYCONF_ITERATIONS_IND	1
+
 #define PEFS_RANDOMCHAIN_MIN		16
 #define PEFS_RANDOMCHAIN_MAX		64
 
@@ -48,7 +54,6 @@
 #define PEFS_ERR_NOENT			5
 #define PEFS_ERR_EXIST			6
 #define PEFS_ERR_INVALID		7
-#define PEFS_ERR_INVALID_ALG		8
 
 #define PEFS_FS_IGNORE_TYPE		0x0001
 
@@ -62,10 +67,11 @@ struct pefs_xkeyenc {
 };
 
 struct pefs_keyparam {
+	int kp_alg;
+	int kp_keybits;
 	int kp_nopassphrase;
 	int kp_iterations;
 	char *kp_keyfile;
-	char *kp_alg;
 };
 
 void	pefs_warn(const char *, ...) __printf0like(1, 2);
@@ -83,11 +89,16 @@ uintmax_t	pefs_keyid_as_int(char *keyid);
 const char *	pefs_alg_name(struct pefs_xkey *xk);
 void	pefs_alg_list(FILE *stream);
 
+int	pefs_keyparam_init(struct pefs_keyparam *kp, const char *fsroot);
+int	pefs_keyparam_setalg(struct pefs_keyparam *kp, const char *algname);
+int	pefs_keyparam_setiterations(struct pefs_keyparam *kp, const char *arg);
+
 static inline void
-pefs_keyparam_init(struct pefs_keyparam *kp)
+pefs_keyparam_create(struct pefs_keyparam *kp)
 {
 	kp->kp_nopassphrase = 0;
-	kp->kp_iterations = PEFS_KDF_ITERATIONS;
+	kp->kp_iterations = -1;
 	kp->kp_keyfile = NULL;
-	kp->kp_alg = NULL;
+	kp->kp_alg = 0;
+	kp->kp_keybits = 0;
 }
