@@ -46,6 +46,10 @@ __FBSDID("$FreeBSD$");
 
 #include <fs/pefs/pefs.h>
 
+static const char *pefs_dircache_support[] = {
+	"zfs", NULL
+};
+
 static MALLOC_DEFINE(M_PEFSMNT, "pefs_mount", "PEFS mount structure");
 
 static const char *pefs_opts[] = {
@@ -56,14 +60,16 @@ static void
 dircache_init(struct mount *mp, int opt, struct pefs_mount *pm)
 {
 	char *lowerfs;
-	int supported;
+	int support;
 
 	lowerfs = mp->mnt_vnodecovered->v_mount->mnt_vfc->vfc_name;
-	supported = (strcmp(lowerfs, "zfs") == 0 ||
-	    strcmp(lowerfs, "tmpfs") == 0);
+	for (support = 0; pefs_dircache_support[support] != NULL; support++)
+		if (strcmp(lowerfs, pefs_dircache_support[support]) == 0)
+			break;
+	support = pefs_dircache_support[support] != NULL ? 1 : 0;
 	if (opt < 0)
-		opt = supported;
-	else if (opt > 0 && supported == 0) {
+		opt = support;
+	else if (opt > 0 && support == 0) {
 		printf("pefs: dircache is not supported by filesystem: %s\n",
 		    lowerfs);
 		opt = 0;
