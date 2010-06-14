@@ -354,7 +354,7 @@ pefs_node_init_lookupkey(struct mount *mp, struct pefs_node *pn,
 
 	if (pn->pn_tkey.ptk_key != NULL) {
 		MPASS(error == 0);
-		pn->pn_flags = PN_HASKEY;
+		pn->pn_flags |= PN_HASKEY;
 	}
 
 	return (error);
