@@ -538,8 +538,7 @@ pefs_lookup(struct vop_cachedlookup_args *ap)
 			 * encrypted cnp will be created anyway, encrypted name
 			 * length should just be the same here.
 			 */
-			pefs_enccn_create_node(&enccn, dvp, cnp);
-			error = 0;
+			error = pefs_enccn_create_node(&enccn, dvp, cnp);
 		}
 
 		if (error == 0) {

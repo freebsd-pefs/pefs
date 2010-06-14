@@ -430,7 +430,6 @@ pefs_name_padsize(size_t size)
 {
 	size_t psize;
 
-	MPASS(size > PEFS_NAME_CSUM_SIZE && size <= MAXNAMLEN);
 	psize = size - PEFS_NAME_CSUM_SIZE;
 	psize = PEFS_NAME_CSUM_SIZE +
 	    roundup2(psize, PEFS_NAME_BLOCK_SIZE);
@@ -443,6 +442,7 @@ pefs_name_pad(char *name, size_t size, size_t maxsize)
 {
 	size_t psize;
 
+	MPASS(size > PEFS_NAME_CSUM_SIZE && size <= MAXNAMLEN);
 	psize = pefs_name_padsize(size);
 	MPASS(psize <= MAXNAMLEN);
 	if (psize != size) {

@@ -26,9 +26,8 @@
  * $FreeBSD$
  */
 
-#define PEFS_CACHENAME_MAXLEN		(rounddown(				\
-    PEFS_NAME_PTON_SIZE(MAXNAMLEN) - PEFS_NAME_CSUM_SIZE - PEFS_TWEAK_SIZE,	\
-    PEFS_NAME_BLOCK_SIZE))
+
+#define PEFS_CACHENAME_MAXLEN		PEFS_NAME_PTON_SIZE(MAXNAMLEN)
 
 struct pefs_dircache_entry;
 LIST_HEAD(pefs_dircache_listhead, pefs_dircache_entry);

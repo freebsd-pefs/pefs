@@ -80,8 +80,6 @@ static int dircache_entries = 0;
 SYSCTL_INT(_vfs_pefs, OID_AUTO, dircache_entries, CTLFLAG_RD,
     &dircache_entries, 0, "Entries in dircache");
 
-CTASSERT(sizeof(struct pefs_dircache_entry) <= 512);
-
 static void dircache_entry_free(struct pefs_dircache_entry *pde);
 
 void
