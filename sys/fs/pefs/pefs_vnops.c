@@ -1787,6 +1787,12 @@ lookupvpg:
 	return (0);
 }
 
+static inline ssize_t
+pefs_bufsize(struct uio *uio, ssize_t maxsize)
+{
+	return (qmin(roundup2(uio->uio_resid, PAGE_SIZE), maxsize));
+}
+
 static int
 pefs_read(struct vop_read_args *ap)
 {
