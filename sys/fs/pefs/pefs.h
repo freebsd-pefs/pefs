@@ -199,16 +199,12 @@ int pefs_key_add(struct pefs_mount *pm, int index, struct pefs_key *pk);
 void pefs_key_remove(struct pefs_mount *pm, struct pefs_key *pk);
 int pefs_key_remove_all(struct pefs_mount *pm);
 
-void pefs_data_encrypt_start(struct pefs_ctx *ctx, struct pefs_tkey *ptk,
+void pefs_data_encrypt_setup(struct pefs_ctx *ctx, struct pefs_tkey *ptk,
     off_t offset);
-void pefs_data_encrypt_update(struct pefs_ctx *ctx, struct pefs_tkey *ptk,
-    struct pefs_chunk *pc);
 void pefs_data_encrypt(struct pefs_ctx *ctx, struct pefs_tkey *ptk,
     off_t offset, struct pefs_chunk *pc);
-void pefs_data_decrypt_start(struct pefs_ctx *ctx, struct pefs_tkey *ptk,
+void pefs_data_decrypt_setup(struct pefs_ctx *ctx, struct pefs_tkey *ptk,
     off_t offset);
-void pefs_data_decrypt_update(struct pefs_ctx *ctx, struct pefs_tkey *ptk,
-    struct pefs_chunk *pc);
 void pefs_data_decrypt(struct pefs_ctx *ctx, struct pefs_tkey *ptk,
     off_t offset, struct pefs_chunk *pc);
 

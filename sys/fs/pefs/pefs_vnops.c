@@ -672,10 +672,9 @@ pefs_tryextend(struct vnode *vp, u_quad_t nsize, struct ucred *cred)
 	pefs_chunk_create(&pc, pn, bsize);
 
 	ctx = pefs_ctx_get();
-	pefs_data_encrypt_start(ctx, &pn->pn_tkey, offset);
 	while (size > 0) {
 		pefs_chunk_zero(&pc);
-		pefs_data_encrypt_update(ctx, &pn->pn_tkey, &pc);
+		pefs_data_encrypt(ctx, &pn->pn_tkey, offset, &pc);
 		puio = pefs_chunk_uio(&pc, offset, UIO_WRITE);
 		PEFSDEBUG("pefs_tryextend: resizing file; filling with zeros: offset=0x%jx, resid=0x%jx\n",
 		    offset, (intmax_t)bsize);
@@ -1805,7 +1804,7 @@ pefs_read(struct vop_read_args *ap)
 	u_quad_t fsize;
 	ssize_t bsize, boffset, done;
 	int ioflag = ap->a_ioflag;
-	int error = 0, mapped, nocopy, restart_decrypt;
+	int error = 0, mapped, nocopy;
 
 	if (vp->v_type == VDIR)
 		return (EISDIR);
@@ -1828,7 +1827,6 @@ pefs_read(struct vop_read_args *ap)
 	pefs_chunk_create(&pc, pn, bsize);
 	m = NULL;
 	nocopy = 0;
-	restart_decrypt = 1;
 	while (uio->uio_resid > 0 && uio->uio_offset < fsize) {
 		MPASS(nocopy == 0);
 		bsize = qmin(uio->uio_resid, bsize);
@@ -1838,7 +1836,6 @@ pefs_read(struct vop_read_args *ap)
 		if (mapped != 0) {
 			error = pefs_readmapped(vp, uio, bsize, &m);
 			if (error == EJUSTRETURN) {
-				restart_decrypt = 1;
 				error = 0;
 				continue;
 			} else if (error != 0)
@@ -1866,12 +1863,8 @@ pefs_read(struct vop_read_args *ap)
 			break;
 
 		pefs_chunk_setsize(&pc, done);
-		if (restart_decrypt) {
-			restart_decrypt = 0;
-			pefs_data_decrypt_start(ctx, &pn->pn_tkey,
-			    uio->uio_offset);
-		}
-		pefs_data_decrypt_update(ctx, &pn->pn_tkey, &pc);
+		pefs_data_decrypt(ctx, &pn->pn_tkey, uio->uio_offset,
+		    &pc);
 		if (nocopy == 0) {
 			error = pefs_chunk_copy(&pc, uio);
 			if (error != 0)
@@ -1980,7 +1973,6 @@ pefs_write(struct vop_write_args *ap)
 	off_t offset;
 	ssize_t resid, bsize;
 	int ioflag = ap->a_ioflag;
-	int restart_encrypt;
 	int error = 0, mapped;
 
 	if (vp->v_type == VDIR)
@@ -2029,14 +2021,10 @@ pefs_write(struct vop_write_args *ap)
 	}
 
 	ctx = pefs_ctx_get();
-	restart_encrypt = 1;
 	pefs_chunk_create(&pc, pn, mapped != 0 ? PAGE_SIZE : bsize);
 	while (resid > 0) {
 		bsize = qmin(resid, bsize);
 		if (mapped != 0) {
-			/* XXX */
-			if ((offset & PAGE_SIZE) != 0)
-				restart_encrypt = 1;
 			error = pefs_writemapped(vp, uio, &pc, &offset, &resid);
 			if (error == EJUSTRETURN) {
 				error = 0;
@@ -2055,11 +2043,7 @@ pefs_write(struct vop_write_args *ap)
 lower_update:
 		PEFSDEBUG("pefs_write: mapped=%d m=%d offset=0x%jx size=0x%jx\n",
 		    mapped, m != NULL, offset, (intmax_t)pc.pc_size);
-		if (restart_encrypt) {
-			restart_encrypt = 0;
-			pefs_data_encrypt_start(ctx, &pn->pn_tkey, offset);
-		}
-		pefs_data_encrypt_update(ctx, &pn->pn_tkey, &pc);
+		pefs_data_encrypt(ctx, &pn->pn_tkey, offset, &pc);
 		puio = pefs_chunk_uio(&pc, offset, uio->uio_rw);
 
 		/* IO_APPEND handled above to prevent offset change races. */

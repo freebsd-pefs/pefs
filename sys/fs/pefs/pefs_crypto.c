@@ -32,6 +32,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/endian.h>
 #include <sys/lock.h>
 #include <sys/libkern.h>
+#include <sys/limits.h>
 #include <sys/malloc.h>
 #include <sys/mount.h>
 #include <sys/refcount.h>
@@ -81,6 +82,7 @@ struct pefs_ctr {
 } ;
 
 struct pefs_ctx {
+	off_t pctx_offset;
 	struct pefs_ctr pctx_ctr;
 	union {
 		camellia_ctx pctx_camellia;
@@ -143,7 +145,11 @@ pefs_crypto_uninit(void)
 struct pefs_ctx *
 pefs_ctx_get(void)
 {
-	return (uma_zalloc(pefs_ctx_zone, M_WAITOK));
+	struct pefs_ctx *ctx;
+
+	ctx = uma_zalloc(pefs_ctx_zone, M_WAITOK);
+	ctx->pctx_offset = OFF_MAX;
+	return (ctx);
 }
 
 void
@@ -361,7 +367,7 @@ pefs_key_remove_all(struct pefs_mount *pm)
 }
 
 void
-pefs_data_encrypt_start(struct pefs_ctx *ctx, struct pefs_tkey *ptk,
+pefs_data_encrypt_setup(struct pefs_ctx *ctx, struct pefs_tkey *ptk,
     off_t offset)
 {
 	MPASS(ctx != NULL);
@@ -369,9 +375,10 @@ pefs_data_encrypt_start(struct pefs_ctx *ctx, struct pefs_tkey *ptk,
 
 	pefs_ctx_cpy(ctx, ptk->ptk_key->pk_data_ctx);
 	ptk->ptk_key->pk_alg->pa_ivsetup(ctx, ptk->ptk_tweak, offset);
+	ctx->pctx_offset = offset;
 }
 
-void
+static void
 pefs_data_encrypt_update(struct pefs_ctx *ctx, struct pefs_tkey *ptk,
     struct pefs_chunk *pc)
 {
@@ -380,6 +387,7 @@ pefs_data_encrypt_update(struct pefs_ctx *ctx, struct pefs_tkey *ptk,
 
 	ptk->ptk_key->pk_alg->pa_crypt(ctx, pc->pc_base, pc->pc_base,
 	    pc->pc_size);
+	ctx->pctx_offset += pc->pc_size;
 }
 
 void
@@ -393,7 +401,8 @@ pefs_data_encrypt(struct pefs_ctx *ctx, struct pefs_tkey *ptk, off_t offset,
 		free_ctx = 1;
 	}
 
-	pefs_data_encrypt_start(ctx, ptk, offset);
+	if (offset != ctx->pctx_offset)
+		pefs_data_encrypt_setup(ctx, ptk, offset);
 	pefs_data_encrypt_update(ctx, ptk, pc);
 
 	if (free_ctx)
@@ -401,13 +410,13 @@ pefs_data_encrypt(struct pefs_ctx *ctx, struct pefs_tkey *ptk, off_t offset,
 }
 
 void
-pefs_data_decrypt_start(struct pefs_ctx *ctx, struct pefs_tkey *ptk,
+pefs_data_decrypt_setup(struct pefs_ctx *ctx, struct pefs_tkey *ptk,
     off_t offset)
 {
-	pefs_data_encrypt_start(ctx, ptk, offset);
+	pefs_data_encrypt_setup(ctx, ptk, offset);
 }
 
-void
+static void
 pefs_data_decrypt_update(struct pefs_ctx *ctx, struct pefs_tkey *ptk,
     struct pefs_chunk *pc)
 {
@@ -418,7 +427,19 @@ void
 pefs_data_decrypt(struct pefs_ctx *ctx, struct pefs_tkey *ptk, off_t offset,
     struct pefs_chunk *pc)
 {
-	pefs_data_encrypt(ctx, ptk, offset, pc);
+	int free_ctx = 0;
+
+	if (ctx == NULL) {
+		ctx = pefs_ctx_get();
+		free_ctx = 1;
+	}
+
+	if (offset != ctx->pctx_offset)
+		pefs_data_decrypt_setup(ctx, ptk, offset);
+	pefs_data_decrypt_update(ctx, ptk, pc);
+
+	if (free_ctx)
+		pefs_ctx_free(ctx);
 }
 
 /*
