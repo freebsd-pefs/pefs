@@ -653,11 +653,13 @@ pefs_chunk_zero(struct pefs_chunk *pc)
 }
 
 int
-pefs_chunk_copy(struct pefs_chunk *pc, struct uio *uio)
+pefs_chunk_copy(struct pefs_chunk *pc, size_t skip, struct uio *uio)
 {
 	int error;
 
-	error = uiomove(pc->pc_base, qmin(pc->pc_size, uio->uio_resid), uio);
+	MPASS(skip < pc->pc_size);
+	error = uiomove((char *)pc->pc_base + skip,
+	    qmin(pc->pc_size - skip, uio->uio_resid), uio);
 
 	return (error);
 }

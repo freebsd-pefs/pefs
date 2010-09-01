@@ -226,7 +226,7 @@ void pefs_chunk_free(struct pefs_chunk* pc, struct pefs_node *pn);
 struct uio * pefs_chunk_uio(struct pefs_chunk *pc, off_t uio_offset,
     enum uio_rw uio_rw);
 void pefs_chunk_zero(struct pefs_chunk *pc);
-int pefs_chunk_copy(struct pefs_chunk *pc, struct uio *uio);
+int pefs_chunk_copy(struct pefs_chunk *pc, size_t skip, struct uio *uio);
 void pefs_chunk_setsize(struct pefs_chunk *pc, size_t size);
 
 extern struct vop_vector pefs_vnodeops;

@@ -1380,7 +1380,7 @@ pefs_readdir(struct vop_readdir_args *ap)
 		pefs_readdir_decrypt(pn->pn_dircache, ctx, pn_key, pn->pn_flags,
 		    pc.pc_base, &mem_size);
 		pefs_chunk_setsize(&pc, mem_size);
-		error = pefs_chunk_copy(&pc, uio);
+		error = pefs_chunk_copy(&pc, 0, uio);
 		if (error != 0)
 			break;
 		uio->uio_offset = puio->uio_offset;
@@ -1866,7 +1866,7 @@ pefs_read(struct vop_read_args *ap)
 		pefs_data_decrypt(ctx, &pn->pn_tkey, uio->uio_offset,
 		    &pc);
 		if (nocopy == 0) {
-			error = pefs_chunk_copy(&pc, uio);
+			error = pefs_chunk_copy(&pc, 0, uio);
 			if (error != 0)
 				break;
 		} else {
@@ -2037,7 +2037,7 @@ pefs_write(struct vop_write_args *ap)
 			pefs_chunk_setsize(&pc, bsize);
 		}
 		MPASS(pc.pc_size <= uio->uio_resid);
-		error = pefs_chunk_copy(&pc, uio);
+		error = pefs_chunk_copy(&pc, 0, uio);
 		if (error != 0)
 			break;
 lower_update:
