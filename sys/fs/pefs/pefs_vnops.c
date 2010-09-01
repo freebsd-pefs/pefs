@@ -1745,6 +1745,50 @@ pefs_ismapped(struct vnode *vp)
 }
 
 static int
+pefs_readmapped(struct vnode *vp, struct uio *uio, ssize_t bsize,
+    vm_page_t *mp)
+{
+	vm_page_t m;
+	vm_offset_t moffset;
+	ssize_t msize;
+	int error;
+
+	*mp = NULL;
+	moffset = uio->uio_offset & PAGE_MASK;
+	msize = qmin(PAGE_SIZE - moffset, bsize);
+
+	VM_OBJECT_LOCK(vp->v_object);
+lookupvpg:
+	m = vm_page_lookup(vp->v_object,
+	    OFF_TO_IDX(uio->uio_offset));
+	if (m != NULL && vm_page_is_valid(m, moffset, msize)) {
+		if (vm_page_sleep_if_busy(m, FALSE, "pefsmr"))
+			goto lookupvpg;
+		vm_page_busy(m);
+		VM_OBJECT_UNLOCK(vp->v_object);
+		PEFSDEBUG("pefs_read: mapped: offset=0x%jx moffset=0x%jx msize=0x%jx\n",
+		    uio->uio_offset, (intmax_t)moffset, (intmax_t)msize);
+		error = uiomove_fromphys(&m, moffset, msize, uio);
+		VM_OBJECT_LOCK(vp->v_object);
+		vm_page_wakeup(m);
+		VM_OBJECT_UNLOCK(vp->v_object);
+		if (error != 0) {
+			MPASS(error != EJUSTRETURN);
+			return (error);
+		}
+		return (EJUSTRETURN);
+	}
+	if (m != NULL && uio->uio_segflg == UIO_NOCOPY) {
+		if (vm_page_sleep_if_busy(m, FALSE, "pefsmr"))
+			goto lookupvpg;
+		vm_page_busy(m);
+		*mp = m;
+	}
+	VM_OBJECT_UNLOCK(vp->v_object);
+	return (0);
+}
+
+static int
 pefs_read(struct vop_read_args *ap)
 {
 	struct vnode *vp = ap->a_vp;
@@ -1758,9 +1802,8 @@ pefs_read(struct vop_read_args *ap)
 	struct sf_buf *sf;
 	vm_page_t m;
 	char *ma;
-	vm_offset_t moffset = 0;
 	u_quad_t fsize;
-	ssize_t bsize, msize, done;
+	ssize_t bsize, boffset, done;
 	int ioflag = ap->a_ioflag;
 	int error = 0, mapped, nocopy, restart_decrypt;
 
@@ -1783,6 +1826,7 @@ pefs_read(struct vop_read_args *ap)
 
 	ctx = pefs_ctx_get();
 	pefs_chunk_create(&pc, pn, bsize);
+	m = NULL;
 	nocopy = 0;
 	restart_decrypt = 1;
 	while (uio->uio_resid > 0 && uio->uio_offset < fsize) {
@@ -1791,39 +1835,24 @@ pefs_read(struct vop_read_args *ap)
 		bsize = qmin(fsize - uio->uio_offset, bsize);
 		pefs_chunk_setsize(&pc, bsize);
 
-		if (mapped) {
-			moffset = uio->uio_offset & PAGE_MASK;
-			msize = qmin(PAGE_SIZE - moffset, bsize);
-
-			VM_OBJECT_LOCK(vp->v_object);
-lookupvpg:
-			m = vm_page_lookup(vp->v_object,
-			    OFF_TO_IDX(uio->uio_offset));
-			if (m != NULL && vm_page_is_valid(m, moffset, msize)) {
-				if (vm_page_sleep_if_busy(m, FALSE, "pefsmr"))
-					goto lookupvpg;
-				vm_page_busy(m);
-				VM_OBJECT_UNLOCK(vp->v_object);
-				PEFSDEBUG("pefs_read: mapped: offset=0x%jx moffset=0x%jx msize=0x%jx\n",
-				    uio->uio_offset, (intmax_t)moffset, (intmax_t)msize);
-				error = uiomove_fromphys(&m, moffset, msize, uio);
-				VM_OBJECT_LOCK(vp->v_object);
-				vm_page_wakeup(m);
-				VM_OBJECT_UNLOCK(vp->v_object);
-				if (error != 0)
-					break;
+		if (mapped != 0) {
+			error = pefs_readmapped(vp, uio, bsize, &m);
+			if (error == EJUSTRETURN) {
 				restart_decrypt = 1;
+				error = 0;
 				continue;
-			} else if (m != NULL && uio->uio_segflg == UIO_NOCOPY) {
-				if (vm_page_sleep_if_busy(m, FALSE, "pefsmr"))
-					goto lookupvpg;
-				vm_page_busy(m);
+			} else if (error != 0)
+				break;
+			if (m != NULL && uio->uio_segflg == UIO_NOCOPY)
 				nocopy = 1;
-			}
-			VM_OBJECT_UNLOCK(vp->v_object);
+			else
+				MPASS(m == NULL);
 			/* Page not cached. Make next read page-aligned. */
-			pefs_chunk_setsize(&pc, msize);
+			done = qmin(bsize,
+			    PAGE_SIZE - (uio->uio_offset & PAGE_MASK));
+			pefs_chunk_setsize(&pc, done);
 		}
+		boffset = uio->uio_offset & PAGE_MASK;
 
 		PEFSDEBUG("pefs_read: mapped=%d m=%d offset=0x%jx size=0x%jx\n",
 		    mapped, m != NULL, uio->uio_offset, (intmax_t)pc.pc_size);
@@ -1852,7 +1881,7 @@ lookupvpg:
 			sched_pin();
 			sf = sf_buf_alloc(m, SFB_CPUPRIVATE);
 			ma = (char *)sf_buf_kva(sf);
-			memcpy(ma + moffset, pc.pc_base, pc.pc_size);
+			memcpy(ma + boffset, pc.pc_base, pc.pc_size);
 			uio->uio_offset += pc.pc_size;
 			uio->uio_resid -= pc.pc_size;
 			sf_buf_free(sf);
