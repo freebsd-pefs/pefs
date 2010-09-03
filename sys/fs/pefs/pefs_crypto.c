@@ -384,6 +384,7 @@ pefs_data_encrypt_update(struct pefs_ctx *ctx, struct pefs_tkey *ptk,
 {
 	MPASS(ctx != NULL);
 	MPASS(ptk->ptk_key != NULL);
+	MPASS((ctx->pctx_offset & PAGE_MASK) == 0);
 
 	ptk->ptk_key->pk_alg->pa_crypt(ctx, pc->pc_base, pc->pc_base,
 	    pc->pc_size);
@@ -420,7 +421,41 @@ static void
 pefs_data_decrypt_update(struct pefs_ctx *ctx, struct pefs_tkey *ptk,
     struct pefs_chunk *pc)
 {
-	pefs_data_encrypt_update(ctx, ptk, pc);
+	off_t offset;
+	ssize_t resid;
+	long *p;
+	char *buf, *end;
+
+	MPASS(ctx != NULL);
+	MPASS(ptk->ptk_key != NULL);
+	MPASS((ctx->pctx_offset & PAGE_MASK) == 0);
+
+	offset = ctx->pctx_offset;
+	buf = (char *)pc->pc_base;
+	end = buf + pc->pc_size;
+	while (buf < end) {
+		if ((end - buf) >= PAGE_SIZE) {
+			p = (long *)buf;
+			resid = PAGE_SIZE / sizeof(long);
+			for (; resid > 0; resid--)
+				if (*(p++) != 0)
+					break;
+			if (resid == 0) {
+				bzero(buf, PAGE_SIZE);
+				offset += PAGE_SIZE;
+				buf += PAGE_SIZE;
+				continue;
+			}
+			resid = PAGE_SIZE;
+		} else
+			resid = end - buf;
+		if (offset != ctx->pctx_offset)
+			pefs_data_decrypt_setup(ctx, ptk, offset);
+		ptk->ptk_key->pk_alg->pa_crypt(ctx, buf, buf, resid);
+		buf += resid;
+		offset += resid;
+		ctx->pctx_offset += resid;
+	}
 }
 
 void
