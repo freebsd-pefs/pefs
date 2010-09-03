@@ -99,6 +99,9 @@ struct pefs_enccn {
 	struct pefs_tkey pec_tkey;
 };
 
+static int pefs_read_int(struct vnode *vp, struct uio *uio, int ioflag,
+    struct ucred *cred, u_quad_t fsize);
+
 static inline u_long
 pefs_getgen(struct vnode *vp, struct ucred *cred)
 {
@@ -1752,9 +1755,10 @@ pefs_readmapped(struct vnode *vp, struct uio *uio, ssize_t bsize,
 	ssize_t msize;
 	int error;
 
+	MPASS(bsize <= PAGE_SIZE);
 	*mp = NULL;
 	moffset = uio->uio_offset & PAGE_MASK;
-	msize = qmin(PAGE_SIZE - moffset, bsize);
+	msize = bsize - moffset;
 
 	VM_OBJECT_LOCK(vp->v_object);
 lookupvpg:
@@ -1799,18 +1803,11 @@ pefs_read(struct vop_read_args *ap)
 	struct vnode *vp = ap->a_vp;
 	struct vnode *lvp = PEFS_LOWERVP(vp);
 	struct uio *uio = ap->a_uio;
-	struct uio *puio;
 	struct ucred *cred = ap->a_cred;
 	struct pefs_node *pn = VP_TO_PN(vp);
-	struct pefs_chunk pc;
-	struct pefs_ctx *ctx;
-	struct sf_buf *sf;
-	vm_page_t m;
-	char *ma;
 	u_quad_t fsize;
-	ssize_t bsize, boffset, done;
 	int ioflag = ap->a_ioflag;
-	int error = 0, mapped, nocopy;
+	int error;
 
 	if (vp->v_type == VDIR)
 		return (EISDIR);
@@ -1823,11 +1820,39 @@ pefs_read(struct vop_read_args *ap)
 	if (uio->uio_offset < 0)
 		return (EINVAL);
 
-	mapped = pefs_ismapped(vp);
-	bsize = qmin(uio->uio_resid, mapped ? PAGE_SIZE : DFLTPHYS);
 	error = pefs_getsize(vp, &fsize, cred);
 	if (error != 0)
 		return (error);
+
+	error = pefs_read_int(vp, uio, ioflag, cred, fsize);
+	return (error);
+}
+
+static int
+pefs_read_int(struct vnode *vp, struct uio *uio, int ioflag, struct ucred *cred,
+    u_quad_t fsize)
+{
+	struct vnode *lvp = PEFS_LOWERVP(vp);
+	struct uio *puio;
+	struct pefs_node *pn = VP_TO_PN(vp);
+	struct pefs_chunk pc;
+	struct pefs_ctx *ctx;
+	struct sf_buf *sf;
+	vm_page_t m;
+	char *ma;
+	ssize_t bsize, bskip, done;
+	off_t poffset;
+	int error = 0, mapped, nocopy;
+
+	MPASS(vp->v_type == VREG);
+	MPASS(uio->uio_resid != 0);
+	MPASS(uio->uio_offset >= 0);
+
+	mapped = pefs_ismapped(vp);
+	if (mapped != 0)
+		bsize = PAGE_SIZE;
+	else
+		bsize = pefs_bufsize(uio, DFLTPHYS);
 
 	ctx = pefs_ctx_get();
 	pefs_chunk_create(&pc, pn, bsize);
@@ -1835,9 +1860,10 @@ pefs_read(struct vop_read_args *ap)
 	nocopy = 0;
 	while (uio->uio_resid > 0 && uio->uio_offset < fsize) {
 		MPASS(nocopy == 0);
-		bsize = qmin(uio->uio_resid, bsize);
-		bsize = qmin(fsize - uio->uio_offset, bsize);
-		pefs_chunk_setsize(&pc, bsize);
+		bskip = uio->uio_offset & PAGE_MASK;
+		poffset = uio->uio_offset - bskip;
+		bsize = pefs_bufsize(uio, bsize);
+		bsize = qmin(fsize - poffset, bsize);
 
 		if (mapped != 0) {
 			error = pefs_readmapped(vp, uio, bsize, &m);
@@ -1850,29 +1876,25 @@ pefs_read(struct vop_read_args *ap)
 				nocopy = 1;
 			else
 				MPASS(m == NULL);
-			/* Page not cached. Make next read page-aligned. */
-			done = qmin(bsize,
-			    PAGE_SIZE - (uio->uio_offset & PAGE_MASK));
-			pefs_chunk_setsize(&pc, done);
 		}
-		boffset = uio->uio_offset & PAGE_MASK;
+		pefs_chunk_setsize(&pc, bsize);
 
 		PEFSDEBUG("pefs_read: mapped=%d m=%d offset=0x%jx size=0x%jx\n",
-		    mapped, m != NULL, uio->uio_offset, (intmax_t)pc.pc_size);
-		puio = pefs_chunk_uio(&pc, uio->uio_offset, uio->uio_rw);
+		    mapped, m != NULL, uio->uio_offset, (intmax_t)bsize - bskip);
+		puio = pefs_chunk_uio(&pc, poffset, uio->uio_rw);
 		error = VOP_READ(lvp, puio, ioflag, cred);
 		if (error != 0)
 			break;
 
 		done = pc.pc_size - puio->uio_resid;
-		if (done <= 0)
+		if (done <= bskip)
 			break;
 
+		/* XXX assert full buffer is read */
 		pefs_chunk_setsize(&pc, done);
-		pefs_data_decrypt(ctx, &pn->pn_tkey, uio->uio_offset,
-		    &pc);
+		pefs_data_decrypt(ctx, &pn->pn_tkey, poffset, &pc);
 		if (nocopy == 0) {
-			error = pefs_chunk_copy(&pc, 0, uio);
+			error = pefs_chunk_copy(&pc, bskip, uio);
 			if (error != 0)
 				break;
 		} else {
@@ -1880,9 +1902,10 @@ pefs_read(struct vop_read_args *ap)
 			sched_pin();
 			sf = sf_buf_alloc(m, SFB_CPUPRIVATE);
 			ma = (char *)sf_buf_kva(sf);
-			memcpy(ma + boffset, pc.pc_base, pc.pc_size);
-			uio->uio_offset += pc.pc_size;
-			uio->uio_resid -= pc.pc_size;
+			done -= bskip;
+			memcpy(ma + bskip, (char *)pc.pc_base + bskip, done);
+			uio->uio_offset += done;
+			uio->uio_resid -= done;
 			sf_buf_free(sf);
 			sched_unpin();
 			VM_OBJECT_LOCK(vp->v_object);
