@@ -629,17 +629,15 @@ pefs_open(struct vop_open_args *ap)
 }
 
 static int
-pefs_tryextend(struct vnode *vp, u_quad_t nsize, struct ucred *cred)
+pefs_truncate(struct vnode *vp, u_quad_t nsize, struct ucred *cred)
 {
 	struct vnode *lvp = PEFS_LOWERVP(vp);
 	struct vattr va;
 	struct uio *puio;
 	struct pefs_node *pn = VP_TO_PN(vp);
 	struct pefs_chunk pc;
-	struct pefs_ctx *ctx;
-	u_quad_t osize;
-	off_t offset;
-	size_t bsize, size;
+	u_quad_t osize, diff;
+	size_t oskip, nskip;
 	int error;
 
 	MPASS(vp->v_type == VREG);
@@ -650,7 +648,7 @@ pefs_tryextend(struct vnode *vp, u_quad_t nsize, struct ucred *cred)
 		return (error);
 	osize = va.va_size;
 
-	if (nsize <= osize)
+	if (nsize == osize)
 		return (0);
 
 	if (VOP_ISLOCKED(vp) != LK_EXCLUSIVE) {
@@ -659,46 +657,61 @@ pefs_tryextend(struct vnode *vp, u_quad_t nsize, struct ucred *cred)
 		if (error != 0)
 			return (error);
 		osize = va.va_size;
-		if (nsize <= osize)
+		if (nsize == osize)
 			return (0);
 	}
 
-	PEFSDEBUG("pefs_tryextend: old size 0x%jx, new size 0x%jx\n",
+	PEFSDEBUG("pefs_truncate: old size 0x%jx, new size 0x%jx\n",
 	    osize, nsize);
+
+	oskip = osize & PAGE_MASK;
+	nskip = nsize & PAGE_MASK;
+	pefs_chunk_create(&pc, pn, PAGE_SIZE);
+
+	if (nsize < osize && nskip != 0) {
+		pefs_chunk_setsize(&pc, nskip);
+		puio = pefs_chunk_uio(&pc, nsize - nskip, UIO_READ);
+		PEFSDEBUG("pefs_truncate: shrinking file: "
+		    "offset=0x%jx, resid=0x%jx\n",
+		    puio->uio_offset, puio->uio_resid);
+		error = pefs_read_int(vp, puio, IO_UNIT, cred, osize);
+		MPASS(puio->uio_resid == 0);
+		puio = pefs_chunk_uio(&pc, nsize - nskip, UIO_WRITE);
+		error = pefs_write_int(vp, puio, IO_UNIT, cred, nsize - nskip);
+	}
 
 	VATTR_NULL(&va);
 	va.va_size = nsize;
 	VOP_SETATTR(lvp, &va, cred);
 	vnode_pager_setsize(vp, nsize);
 
-	size = nsize - osize;
-	bsize = qmin(size, DFLTPHYS);
-	offset = osize;
-	pefs_chunk_create(&pc, pn, bsize);
+	if (nsize < osize)
+		goto out;
 
-	ctx = pefs_ctx_get();
-	while (size > 0) {
+	diff = nsize - osize;
+	if (oskip != 0 || diff < PAGE_SIZE) {
+		pefs_chunk_setsize(&pc, qmin(PAGE_SIZE - oskip, diff));
 		pefs_chunk_zero(&pc);
-		pefs_data_encrypt(ctx, &pn->pn_tkey, offset, &pc);
-		puio = pefs_chunk_uio(&pc, offset, UIO_WRITE);
-		PEFSDEBUG("pefs_tryextend: resizing file; filling with zeros: offset=0x%jx, resid=0x%jx\n",
-		    offset, (intmax_t)bsize);
-		error = VOP_WRITE(lvp, puio, 0, cred);
-		if (error != 0) {
-			/* try to reset */
-			VATTR_NULL(&va);
-			va.va_size = osize;
-			VOP_SETATTR(lvp, &va, cred);
-			break;
-		}
-		offset += bsize;
-		size -= bsize;
-		if (size != 0) {
-			bsize = qmin(size, bsize);
-			pefs_chunk_setsize(&pc, bsize);
-		}
+		puio = pefs_chunk_uio(&pc, osize, UIO_WRITE);
+		PEFSDEBUG("pefs_truncate: extending file: "
+		    "offset=0x%jx, resid=0x%jx\n",
+		    puio->uio_offset, puio->uio_resid);
+		error = pefs_write_int(vp, puio, IO_UNIT, cred, osize);
+		if (error != 0 || pc.pc_size == diff)
+			goto out;
 	}
-	pefs_ctx_free(ctx);
+	
+	if (nskip != 0) {
+		pefs_chunk_setsize(&pc, nskip);
+		pefs_chunk_zero(&pc);
+		puio = pefs_chunk_uio(&pc, nsize - nskip, UIO_WRITE);
+		PEFSDEBUG("pefs_truncate: extending file: "
+		    "offset=0x%jx, resid=0x%jx\n",
+		    puio->uio_offset, puio->uio_resid);
+		error = pefs_write_int(vp, puio, IO_UNIT, cred, nsize - nskip);
+	}
+
+out:
 	pefs_chunk_free(&pc, pn);
 
 	return (error);
@@ -745,7 +758,7 @@ pefs_setattr(struct vop_setattr_args *ap)
 			if ((VP_TO_PN(vp)->pn_flags & PN_HASKEY) == 0)
 				break;
 			if (vp->v_type == VREG)
-				error = pefs_tryextend(vp, vap->va_size, cred);
+				error = pefs_truncate(vp, vap->va_size, cred);
 			else
 				error = EOPNOTSUPP; /* TODO */
 			if (error != 0)
@@ -2022,7 +2035,7 @@ pefs_write(struct vop_write_args *ap)
 	}
 
 	if (uio->uio_offset > fsize) {
-		error = pefs_tryextend(vp, uio->uio_offset, cred);
+		error = pefs_truncate(vp, uio->uio_offset, cred);
 		if (error != 0)
 			return (error);
 		fsize = uio->uio_offset;
