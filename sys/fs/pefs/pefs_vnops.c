@@ -101,6 +101,8 @@ struct pefs_enccn {
 
 static int pefs_read_int(struct vnode *vp, struct uio *uio, int ioflag,
     struct ucred *cred, u_quad_t fsize);
+static int pefs_write_int(struct vnode *vp, struct uio *uio, int ioflag,
+    struct ucred *cred, u_quad_t nsize);
 
 static inline u_long
 pefs_getgen(struct vnode *vp, struct ucred *cred)
@@ -1925,27 +1927,25 @@ pefs_read_int(struct vnode *vp, struct uio *uio, int ioflag, struct ucred *cred,
 }
 
 static int
-pefs_writemapped(struct vnode *vp, struct uio *uio, struct pefs_chunk *pcp,
-    off_t *offsetp, ssize_t *residp)
+pefs_writemapped(struct vnode *vp, struct uio *uio,
+    ssize_t bsize, char *pagebuf)
 {
 	struct sf_buf *sf;
 	char *ma;
 	vm_page_t m;
 	vm_offset_t moffset;
 	vm_pindex_t idx;
-	ssize_t msize;
 	int error;
 
-	moffset = *offsetp & PAGE_MASK;
-	msize = qmin(PAGE_SIZE - moffset, *residp);
-	pefs_chunk_setsize(pcp, moffset + msize);
+	MPASS(bsize <= PAGE_SIZE);
+	moffset = uio->uio_offset & PAGE_MASK;
 
 	VM_OBJECT_LOCK(vp->v_object);
 lookupvpg:
-	idx = OFF_TO_IDX(*offsetp);
+	idx = OFF_TO_IDX(uio->uio_offset);
 	m = vm_page_lookup(vp->v_object, idx);
 	if (m != NULL &&
-	    vm_page_is_valid(m, 0, moffset + msize)) {
+	    vm_page_is_valid(m, 0, bsize)) {
 		if (vm_page_sleep_if_busy(m, FALSE, "pefsmw"))
 			goto lookupvpg;
 		vm_page_busy(m);
@@ -1953,13 +1953,13 @@ lookupvpg:
 		vm_page_undirty(m);
 		vm_page_unlock_queues();
 		VM_OBJECT_UNLOCK(vp->v_object);
-		PEFSDEBUG("pefs_write: mapped: offset=0x%jx moffset=0x%jx msize=0x%jx\n",
-		    *offsetp, (intmax_t)moffset, (intmax_t)msize);
+		PEFSDEBUG("pefs_write: mapped: offset=0x%jx moffset=0x%jx bsize=0x%jx\n",
+		    uio->uio_offset, (intmax_t)moffset, (intmax_t)bsize);
 		sched_pin();
 		sf = sf_buf_alloc(m, SFB_CPUPRIVATE);
 		ma = (char *)sf_buf_kva(sf);
-		error = uiomove(ma + moffset, msize, uio);
-		memcpy(pcp->pc_base, ma, pcp->pc_size);
+		error = uiomove(ma + moffset, bsize - moffset, uio);
+		memcpy(pagebuf, ma, bsize);
 		sf_buf_free(sf);
 		sched_unpin();
 		VM_OBJECT_LOCK(vp->v_object);
@@ -1969,20 +1969,16 @@ lookupvpg:
 			MPASS(error != EJUSTRETURN);
 			return (error);
 		}
-		if (moffset != 0) {
-			*residp += moffset;
-			*offsetp -= moffset;
-		}
 		return (EJUSTRETURN);
 	}
 	if (__predict_false(vp->v_object->cache != NULL)) {
 		PEFSDEBUG("pefs_write: free cache: 0x%jx\n",
-		    *offsetp - moffset);
+		    uio->uio_offset - moffset);
 		vm_page_cache_free(vp->v_object, idx,
 		    idx + 1);
 	}
 	MPASS(m == NULL ||
-	    !vm_page_is_valid(m, moffset, msize));
+	    !vm_page_is_valid(m, moffset, bsize - moffset));
 	VM_OBJECT_UNLOCK(vp->v_object);
 	return (0);
 }
@@ -1994,15 +1990,10 @@ pefs_write(struct vop_write_args *ap)
 	struct vnode *lvp = PEFS_LOWERVP(vp);
 	struct ucred *cred = ap->a_cred;
 	struct uio *uio = ap->a_uio;
-	struct uio *puio;
 	struct pefs_node *pn = VP_TO_PN(vp);
-	struct pefs_chunk pc;
-	struct pefs_ctx *ctx;
-	u_quad_t nsize;
-	off_t offset;
-	ssize_t resid, bsize;
+	u_quad_t fsize;
 	int ioflag = ap->a_ioflag;
-	int error = 0, mapped;
+	int error;
 
 	if (vp->v_type == VDIR)
 		return (EISDIR);
@@ -2021,59 +2012,123 @@ pefs_write(struct vop_write_args *ap)
 		return (VOP_WRITE(lvp, uio, ioflag, cred));
 	}
 
-	error = pefs_getsize(vp, &nsize, cred);
+	error = pefs_getsize(vp, &fsize, cred);
 	if (error != 0)
 		return (error);
 
 	if (ioflag & IO_APPEND) {
-		uio->uio_offset = nsize;
+		uio->uio_offset = fsize;
 		ioflag &= ~IO_APPEND;
 	}
 
-	offset = uio->uio_offset;
-	resid = uio->uio_resid;
-
-	if (offset > nsize) {
-		error = pefs_tryextend(vp, offset, cred);
+	if (uio->uio_offset > fsize) {
+		error = pefs_tryextend(vp, uio->uio_offset, cred);
 		if (error != 0)
 			return (error);
+		fsize = uio->uio_offset;
 	}
 
-	mapped = pefs_ismapped(vp);
-	bsize = qmin(resid, mapped != 0 ? PAGE_SIZE : DFLTPHYS);
+	error = pefs_write_int(vp, uio, ioflag, cred, fsize);
 
-	if (offset + resid > nsize) {
+	return (error);
+}
+
+static int
+pefs_write_int(struct vnode *vp, struct uio *uio, int ioflag,
+    struct ucred *cred, u_quad_t fsize)
+{
+	struct vnode *lvp = PEFS_LOWERVP(vp);
+	struct uio *puio;
+	struct pefs_node *pn = VP_TO_PN(vp);
+	struct pefs_chunk pc;
+	struct pefs_ctx *ctx;
+	u_quad_t nsize;
+	off_t poffset;
+	ssize_t bmaxsize, bsize, bskip;
+	int error = 0, mapped;
+
+	MPASS(vp->v_type == VREG);
+	MPASS(uio->uio_resid != 0);
+	MPASS(uio->uio_offset >= 0);
+
+	mapped = pefs_ismapped(vp);
+	if (mapped != 0)
+		bmaxsize = PAGE_SIZE;
+	else
+		bmaxsize = pefs_bufsize(uio, DFLTPHYS);
+	bsize = bmaxsize;
+
+	nsize = fsize;
+	MPASS(uio->uio_offset <= fsize);
+	if (uio->uio_offset + uio->uio_resid > nsize) {
 		PEFSDEBUG("pefs_write: extend: 0x%jx (old size: 0x%jx)\n",
-		    offset + resid, nsize);
-		nsize = offset + resid;
+		    uio->uio_offset + uio->uio_resid, nsize);
+		nsize = uio->uio_offset + uio->uio_resid;
 		vnode_pager_setsize(vp, nsize);
 	}
 
 	ctx = pefs_ctx_get();
-	pefs_chunk_create(&pc, pn, mapped != 0 ? PAGE_SIZE : bsize);
-	while (resid > 0) {
-		bsize = qmin(resid, bsize);
+	pefs_chunk_create(&pc, pn, bsize);
+	while (uio->uio_resid > 0) {
+		bskip = uio->uio_offset & PAGE_MASK;
+		poffset = uio->uio_offset - bskip;
+		if (bskip != 0)
+			bsize = PAGE_SIZE;
+		else {
+			/* Exclude last incomplete page from the chunk */
+			bsize = rounddown(uio->uio_resid, PAGE_SIZE);
+			if (bsize == 0)
+				bsize = PAGE_SIZE;
+			bsize = qmin(bsize, bmaxsize);
+		}
+		bsize = qmin(nsize - poffset, bsize);
+		pefs_chunk_setsize(&pc, bsize);
+
 		if (mapped != 0) {
-			error = pefs_writemapped(vp, uio, &pc, &offset, &resid);
+			error = pefs_writemapped(vp, uio, bsize, pc.pc_base);
 			if (error == EJUSTRETURN) {
 				error = 0;
 				goto lower_update;
+			} else if (error != 0) {
+				PEFSDEBUG("pefs_write: mapped write error: "
+				    "offset=0x%jx resid=%0jx\n",
+				    uio->uio_offset, uio->uio_resid);
+				break;
 			}
-			/* Page align consequent writes */
-			pefs_chunk_setsize(&pc,
-			    qmin(PAGE_SIZE - (offset & PAGE_MASK), resid));
-		} else {
-			pefs_chunk_setsize(&pc, bsize);
 		}
-		MPASS(pc.pc_size <= uio->uio_resid);
-		error = pefs_chunk_copy(&pc, 0, uio);
-		if (error != 0)
+		if (bskip != 0 || (bskip + uio->uio_resid) < PAGE_SIZE) {
+			MPASS(pc.pc_size <= PAGE_SIZE);
+			puio = pefs_chunk_uio(&pc, poffset, UIO_READ);
+			if (poffset < fsize) {
+				error = pefs_read_int(vp, puio, IO_UNIT, cred,
+				    qmax(fsize, uio->uio_offset));
+				if (error != 0)
+					break;
+			}
+			if (puio->uio_resid != 0) {
+				PEFSDEBUG("pefs_write: clear buffer: "
+				    "resid=0x%jx fsize=0x%jx nsize=0x%jx "
+				    "poffset=0x%jx offset=0x%jx bsize=0x%jx\n",
+				    puio->uio_resid, fsize, nsize, poffset,
+				    uio->uio_offset, pc.pc_size);
+				MPASS(puio->uio_offset == fsize ||
+				    puio->uio_offset == poffset);
+				bzero(puio->uio_iov[0].iov_base,
+				    puio->uio_resid);
+			}
+		}
+		error = pefs_chunk_copy(&pc, bskip, uio);
+		if (error != 0) {
+			PEFSDEBUG("pefs_write: chunk copy error: "
+			    "offset=0x%jx resid=%0jx\n",
+			    uio->uio_offset, uio->uio_resid);
 			break;
+		}
 lower_update:
-		PEFSDEBUG("pefs_write: mapped=%d m=%d offset=0x%jx size=0x%jx\n",
-		    mapped, m != NULL, offset, (intmax_t)pc.pc_size);
-		pefs_data_encrypt(ctx, &pn->pn_tkey, offset, &pc);
-		puio = pefs_chunk_uio(&pc, offset, uio->uio_rw);
+		PEFSDEBUG("pefs_write: mapped=%d offset=0x%jx size=0x%jx\n",
+		    mapped, poffset + bskip, (intmax_t)bsize - bskip);
+		pefs_data_encrypt(ctx, &pn->pn_tkey, poffset, &pc);
+		puio = pefs_chunk_uio(&pc, poffset, uio->uio_rw);
 
 		/* IO_APPEND handled above to prevent offset change races. */
 		error = VOP_WRITE(lvp, puio, ioflag, cred);
@@ -2089,19 +2144,17 @@ lower_update:
 			 * Correct solution is to implement uiocopy that
 			 * doesn't change uio and iovec.
 			 */
+			PEFSDEBUG("pefs_write: lower level write error: "
+			    "offset=0x%jx resid=%0jx\n",
+			    uio->uio_offset, uio->uio_resid);
 			uio->uio_iov = NULL;
 			uio->uio_iovcnt = 0;
 			uio->uio_rw = -1;
-			uio->uio_resid += pc.pc_size;
-			uio->uio_offset -= pc.pc_size;
+			uio->uio_resid += uio->uio_offset - (poffset + bsize);
+			uio->uio_offset = poffset + bsize;
 			break;
 		}
-
 		MPASS(puio->uio_resid == 0);
-		resid -= pc.pc_size;
-		offset += pc.pc_size;
-		MPASS(resid == uio->uio_resid);
-		MPASS(offset == uio->uio_offset);
 	}
 	pefs_ctx_free(ctx);
 	pefs_chunk_free(&pc, pn);
