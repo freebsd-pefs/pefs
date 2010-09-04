@@ -66,8 +66,6 @@ static struct algorithm algs[] = {
 	{ "camellia192", PEFS_ALG_CAMELLIA_CTR, 192 },
 	{ "camellia256-ctr", PEFS_ALG_CAMELLIA_CTR, 256 },
 	{ "camellia256", PEFS_ALG_CAMELLIA_CTR, 256 },
-	{ "salsa20-256", PEFS_ALG_SALSA20, 256 },
-	{ "salsa20", PEFS_ALG_SALSA20, 256 },
 	{ NULL, 0, 0 },
 };
 

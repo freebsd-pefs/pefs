@@ -44,7 +44,6 @@ __FBSDID("$FreeBSD$");
 #include <crypto/camellia/camellia.h>
 #include <crypto/hmac/hmac_sha512.h>
 #include <crypto/rijndael/rijndael.h>
-#include <crypto/salsa20/salsa20.h>
 
 #include <fs/pefs/pefs.h>
 #include <fs/pefs/vmac.h>
@@ -87,27 +86,16 @@ struct pefs_ctx {
 	union {
 		camellia_ctx pctx_camellia;
 		rijndael_ctx pctx_aes;
-		salsa20_ctx pctx_salsa;
 		struct hmac_sha512_ctx pctx_hmac;
 		vmac_ctx_t pctx_vmac;
 	} o;
 };
 
-static algop_keysetup_t pefs_salsa20_keysetup;
-static algop_ivsetup_t pefs_salsa20_ivsetup;
-static algop_crypt_t pefs_salsa20_crypt;
 static algop_ivsetup_t pefs_ctr_ivsetup;
 static algop_keysetup_t pefs_aes_keysetup;
 static algop_crypt_t pefs_aes_crypt;
 static algop_keysetup_t pefs_camellia_keysetup;
 static algop_crypt_t pefs_camellia_crypt;
-
-static const struct pefs_alg pefs_alg_salsa20 = {
-	PEFS_ALG_SALSA20,
-	pefs_salsa20_keysetup,
-	pefs_salsa20_ivsetup,
-	pefs_salsa20_crypt
-};
 
 static const struct pefs_alg pefs_alg_aes = {
 	PEFS_ALG_AES_CTR,
@@ -224,11 +212,6 @@ pefs_key_get(int alg, int keybits, const char *key, const char *keyid)
 	pk = uma_zalloc(pefs_key_zone, M_WAITOK | M_ZERO);
 
 	switch (alg) {
-	case PEFS_ALG_SALSA20:
-		pk->pk_alg = &pefs_alg_salsa20;
-		if (keybits == 256)
-			pk->pk_keybits = keybits;
-		break;
 	case PEFS_ALG_AES_CTR:
 		pk->pk_alg = &pefs_alg_aes;
 		if (keybits == 128 || keybits == 192 || keybits == 256)
@@ -726,26 +709,6 @@ pefs_name_decrypt(struct pefs_ctx *ctx, struct pefs_key *pk,
 	MPASS(r > 0 && strlen(plain) == r);
 
 	return (r);
-}
-
-static void
-pefs_salsa20_keysetup(struct pefs_ctx *ctx, const uint8_t *key,
-    uint32_t keybits)
-{
-	salsa20_keysetup(&ctx->o.pctx_salsa, key, keybits);
-}
-
-static void
-pefs_salsa20_ivsetup(struct pefs_ctx *ctx, const uint8_t *iv, uint64_t offset)
-{
-	salsa20_ivsetup(&ctx->o.pctx_salsa, iv, offset);
-}
-
-static void
-pefs_salsa20_crypt(struct pefs_ctx *ctx, const uint8_t *plaintext,
-    uint8_t *ciphertext, uint32_t len)
-{
-	salsa20_crypt(&ctx->o.pctx_salsa, plaintext, ciphertext, len);
 }
 
 static void

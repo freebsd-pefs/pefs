@@ -27,7 +27,6 @@
  */
 
 #define PEFS_ALG_INVALID		0
-#define PEFS_ALG_SALSA20		1
 #define PEFS_ALG_AES_CTR		2
 #define PEFS_ALG_CAMELLIA_CTR		3
 
