@@ -94,10 +94,10 @@ pefs_alg_list(FILE *stream)
 	for (prev = NULL, alg = algs; alg->name != NULL; prev = alg++) {
 		if (prev != NULL && alg->id == prev->id &&
 		    alg->keybits == prev->keybits) {
-			fprintf(stream, "\t%s\t(alias for %s)\n", alg->name, prev->name);
+			fprintf(stream, "\t%-16s (alias for %s)\n", alg->name, prev->name);
 		} else if (alg->id == PEFS_ALG_DEFAULT &&
 		    alg->keybits == PEFS_ALG_DEFAULT_KEYBITS) {
-			fprintf(stream, "\t%s\t(default)\n", alg->name);
+			fprintf(stream, "\t%-16s (default)\n", alg->name);
 		} else {
 			fprintf(stream, "\t%s\n", alg->name);
 		}
