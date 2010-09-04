@@ -1650,7 +1650,7 @@ pefs_symlink(struct vop_symlink_args *ap)
 	penc_target = malloc(penc_target_len, M_PEFSBUF, M_WAITOK);
 
 	memcpy(enc_target, target, target_len);
-	pefs_data_encrypt(NULL, &enccn.pec_tkey, 0, &pc);
+	pefs_data_encrypt(&enccn.pec_tkey, 0, &pc);
 	pefs_name_ntop(enc_target, target_len, penc_target, penc_target_len);
 
 	pefs_chunk_free(&pc, dpn);
@@ -1696,7 +1696,7 @@ pefs_readlink(struct vop_readlink_args *ap)
 			error = EIO;
 		} else {
 			pefs_chunk_setsize(&pc, target_len);
-			pefs_data_decrypt(NULL, &pn->pn_tkey, 0, &pc);
+			pefs_data_decrypt(&pn->pn_tkey, 0, &pc);
 			uiomove(pc.pc_base, target_len, uio);
 		}
 	}
@@ -1851,7 +1851,6 @@ pefs_read_int(struct vnode *vp, struct uio *uio, int ioflag, struct ucred *cred,
 	struct uio *puio;
 	struct pefs_node *pn = VP_TO_PN(vp);
 	struct pefs_chunk pc;
-	struct pefs_ctx *ctx;
 	struct sf_buf *sf;
 	vm_page_t m;
 	char *ma;
@@ -1869,7 +1868,6 @@ pefs_read_int(struct vnode *vp, struct uio *uio, int ioflag, struct ucred *cred,
 	else
 		bsize = pefs_bufsize(uio, DFLTPHYS);
 
-	ctx = pefs_ctx_get();
 	pefs_chunk_create(&pc, pn, bsize);
 	m = NULL;
 	nocopy = 0;
@@ -1907,7 +1905,7 @@ pefs_read_int(struct vnode *vp, struct uio *uio, int ioflag, struct ucred *cred,
 
 		/* XXX assert full buffer is read */
 		pefs_chunk_setsize(&pc, done);
-		pefs_data_decrypt(ctx, &pn->pn_tkey, poffset, &pc);
+		pefs_data_decrypt(&pn->pn_tkey, poffset, &pc);
 		if (nocopy == 0) {
 			error = pefs_chunk_copy(&pc, bskip, uio);
 			if (error != 0)
@@ -1933,7 +1931,6 @@ pefs_read_int(struct vnode *vp, struct uio *uio, int ioflag, struct ucred *cred,
 		vm_page_wakeup(m);
 		VM_OBJECT_UNLOCK(vp->v_object);
 	}
-	pefs_ctx_free(ctx);
 	pefs_chunk_free(&pc, pn);
 
 	return (error);
@@ -2054,7 +2051,6 @@ pefs_write_int(struct vnode *vp, struct uio *uio, int ioflag,
 	struct uio *puio;
 	struct pefs_node *pn = VP_TO_PN(vp);
 	struct pefs_chunk pc;
-	struct pefs_ctx *ctx;
 	u_quad_t nsize;
 	off_t poffset;
 	ssize_t bmaxsize, bsize, bskip;
@@ -2080,7 +2076,6 @@ pefs_write_int(struct vnode *vp, struct uio *uio, int ioflag,
 		vnode_pager_setsize(vp, nsize);
 	}
 
-	ctx = pefs_ctx_get();
 	pefs_chunk_create(&pc, pn, bsize);
 	while (uio->uio_resid > 0) {
 		bskip = uio->uio_offset & PAGE_MASK;
@@ -2140,7 +2135,7 @@ pefs_write_int(struct vnode *vp, struct uio *uio, int ioflag,
 lower_update:
 		PEFSDEBUG("pefs_write: mapped=%d offset=0x%jx size=0x%jx\n",
 		    mapped, poffset + bskip, (intmax_t)bsize - bskip);
-		pefs_data_encrypt(ctx, &pn->pn_tkey, poffset, &pc);
+		pefs_data_encrypt(&pn->pn_tkey, poffset, &pc);
 		puio = pefs_chunk_uio(&pc, poffset, uio->uio_rw);
 
 		/* IO_APPEND handled above to prevent offset change races. */
@@ -2169,7 +2164,6 @@ lower_update:
 		}
 		MPASS(puio->uio_resid == 0);
 	}
-	pefs_ctx_free(ctx);
 	pefs_chunk_free(&pc, pn);
 
 	return (error);

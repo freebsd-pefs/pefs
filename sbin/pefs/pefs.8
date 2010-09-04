@@ -126,7 +126,7 @@ mixing files encrypted with different keys in same directory.
 Allows defining key chains, can be used to add/delete several keys by
 specifying only master key.
 .It
-Uses modern cryptographic algorithms: AES and Camellia in CTR mode,
+Uses modern cryptographic algorithms: AES and Camellia in XTS mode,
 PKCS#5v2 and HKDF for key generation.
 .El
 .Pp
@@ -416,9 +416,7 @@ changing default algorithm:
 .Sh DATA AUTHENTICATION
 .Nm
 provides no data integrity checking.
-Because of using block ciphers in Counter (CTR) mode and stream ciphers
-attacker is able to flip arbitrary bits in encrypted file.
-Thus it's strongly recommended to use addition data integrity checking tools.
+Thus it's strongly advised to use additional data integrity checking tools.
 .Sh FILES
 .Bl -tag -width <filesystem>/.pefs.conf -compact
 .It Pa <filesystem>/.pefs.conf

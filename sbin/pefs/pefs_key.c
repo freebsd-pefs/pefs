@@ -54,18 +54,18 @@ struct algorithm {
 };
 
 static struct algorithm algs[] = {
-	{ "aes128-ctr", PEFS_ALG_AES_CTR, 128 },
-	{ "aes128", PEFS_ALG_AES_CTR, 128 },
-	{ "aes192-ctr", PEFS_ALG_AES_CTR, 192 },
-	{ "aes192", PEFS_ALG_AES_CTR, 192 },
-	{ "aes256-ctr", PEFS_ALG_AES_CTR, 256 },
-	{ "aes256", PEFS_ALG_AES_CTR, 256 },
-	{ "camellia128-ctr", PEFS_ALG_CAMELLIA_CTR, 128 },
-	{ "camellia128", PEFS_ALG_CAMELLIA_CTR, 128 },
-	{ "camellia192-ctr", PEFS_ALG_CAMELLIA_CTR, 192 },
-	{ "camellia192", PEFS_ALG_CAMELLIA_CTR, 192 },
-	{ "camellia256-ctr", PEFS_ALG_CAMELLIA_CTR, 256 },
-	{ "camellia256", PEFS_ALG_CAMELLIA_CTR, 256 },
+	{ "aes128-xts", PEFS_ALG_AES_XTS, 128 },
+	{ "aes128", PEFS_ALG_AES_XTS, 128 },
+	{ "aes192-xts", PEFS_ALG_AES_XTS, 192 },
+	{ "aes192", PEFS_ALG_AES_XTS, 192 },
+	{ "aes256-xts", PEFS_ALG_AES_XTS, 256 },
+	{ "aes256", PEFS_ALG_AES_XTS, 256 },
+	{ "camellia128-xts", PEFS_ALG_CAMELLIA_XTS, 128 },
+	{ "camellia128", PEFS_ALG_CAMELLIA_XTS, 128 },
+	{ "camellia192-xts", PEFS_ALG_CAMELLIA_XTS, 192 },
+	{ "camellia192", PEFS_ALG_CAMELLIA_XTS, 192 },
+	{ "camellia256-xts", PEFS_ALG_CAMELLIA_XTS, 256 },
+	{ "camellia256", PEFS_ALG_CAMELLIA_XTS, 256 },
 	{ NULL, 0, 0 },
 };
 

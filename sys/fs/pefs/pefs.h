@@ -27,8 +27,8 @@
  */
 
 #define PEFS_ALG_INVALID		0
-#define PEFS_ALG_AES_CTR		2
-#define PEFS_ALG_CAMELLIA_CTR		3
+#define PEFS_ALG_AES_XTS		4
+#define PEFS_ALG_CAMELLIA_XTS		5
 
 #define PEFS_TWEAK_SIZE			8
 #define PEFS_KEY_BITS			512
@@ -72,6 +72,7 @@ struct pefs_key {
 	const struct pefs_alg *pk_alg;
 	struct pefs_ctx *pk_name_csum_ctx;
 	struct pefs_ctx *pk_name_ctx;
+	struct pefs_ctx *pk_tweak_ctx;
 	struct pefs_ctx *pk_data_ctx;
 	struct mtx *pk_entry_lock;
 	int pk_algid;
@@ -198,14 +199,8 @@ int pefs_key_add(struct pefs_mount *pm, int index, struct pefs_key *pk);
 void pefs_key_remove(struct pefs_mount *pm, struct pefs_key *pk);
 int pefs_key_remove_all(struct pefs_mount *pm);
 
-void pefs_data_encrypt_setup(struct pefs_ctx *ctx, struct pefs_tkey *ptk,
-    off_t offset);
-void pefs_data_encrypt(struct pefs_ctx *ctx, struct pefs_tkey *ptk,
-    off_t offset, struct pefs_chunk *pc);
-void pefs_data_decrypt_setup(struct pefs_ctx *ctx, struct pefs_tkey *ptk,
-    off_t offset);
-void pefs_data_decrypt(struct pefs_ctx *ctx, struct pefs_tkey *ptk,
-    off_t offset, struct pefs_chunk *pc);
+void pefs_data_encrypt(struct pefs_tkey *ptk, off_t offset, struct pefs_chunk *pc);
+void pefs_data_decrypt(struct pefs_tkey *ptk, off_t offset, struct pefs_chunk *pc);
 
 int pefs_name_encrypt(struct pefs_ctx *ctx, struct pefs_tkey *ptk,
     const char *plain, size_t plain_len, char *enc, size_t enc_size);
