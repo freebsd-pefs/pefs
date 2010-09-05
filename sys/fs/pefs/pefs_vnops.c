@@ -878,6 +878,7 @@ pefs_rename(struct vop_rename_args *ap)
 	struct componentname *tcnp = ap->a_tcnp;
 	struct pefs_enccn fenccn;
 	struct pefs_enccn tenccn;
+	struct pefs_enccn txenccn;
 	int error;
 
 	KASSERT(tcnp->cn_flags & (SAVENAME | SAVESTART),
@@ -953,35 +954,37 @@ pefs_rename(struct vop_rename_args *ap)
 	}
 #endif
 	if (tvp != NULL) {
-		if (fvp->v_type == VDIR && tvp->v_type == VDIR) {
+		if (fvp->v_type == VDIR && tvp->v_type != VDIR)
+			error = ENOTDIR;
+		else if (fvp->v_type != VDIR && tvp->v_type == VDIR)
+			error = EISDIR;
+		else if (fvp->v_type != VREG)
 			/*
-			 *   Lower level is to check if tvp directory is empty.
-			 *   After rename fvp will contain invalid key/tweak
-			 *   because it is rename of fvp.
+			 * Lower level is to check if tvp directory is empty.
+			 * After rename fvp will contain invalid key/tweak.
 			 */
 			error = pefs_enccn_get(&tenccn, tdvp, tvp, tcnp);
-		} else if (fvp->v_type == VDIR && tvp->v_type != VDIR) {
-			error = ENOTDIR;
-		} else if (fvp->v_type != VDIR && tvp->v_type == VDIR) {
-			error = EISDIR;
-		} else {
+		else if (fvp->v_type == VREG) {
 			/*
-			 * (fvp->v_type != VDIR && tvp->v_type != VDIR):
-			 * We end up having 2 files with same name but
-			 * different tweaks/keys. Remove the old one.
-			 * Set ltvp to zero here because we rename to new name
-			 * and then remove old one
+			 * We end up having 2 files with same name but different
+			 * tweaks/keys. Set ltvp to zero here because we rename
+			 * to new name and then remove old one.
 			 */
+			pefs_enccn_init(&txenccn);
 			error = pefs_enccn_create(&tenccn,
 			    fenccn.pec_tkey.ptk_key, fenccn.pec_tkey.ptk_tweak,
 			    tcnp);
 			if (error == 0)
+				error = pefs_enccn_get(&txenccn, tdvp, tvp,
+				    tcnp);
+			if (error == 0)
 				ltvp = NULL;
+			else
+				pefs_enccn_free(&txenccn);
 		}
-	} else {
+	} else
 		error = pefs_enccn_create(&tenccn, fenccn.pec_tkey.ptk_key,
 		    fenccn.pec_tkey.ptk_tweak, tcnp);
-	}
 	if (error != 0) {
 		pefs_enccn_free(&fenccn);
 		goto bad;
@@ -999,36 +1002,31 @@ pefs_rename(struct vop_rename_args *ap)
 	    &tenccn.pec_cn);
 
 	if (error == 0) {
-		if (tvp != NULL && tvp->v_type != VDIR) {
+		if (tvp != NULL && fvp->v_type == VREG) {
 			/*
 			 * Remove old file. Double rename is not performed to
 			 * prevent data loss in case of error
 			 */
-			pefs_enccn_free(&tenccn);
 			ASSERT_VOP_UNLOCKED(tdvp, "pefs_rename");
-			ASSERT_VOP_LOCKED(tvp, "pefs_rename");
+			ASSERT_VOP_ELOCKED(tvp, "pefs_rename");
+			cache_purge(tvp);
+			VP_TO_PN(tvp)->pn_flags |= PN_WANTRECYCLE;
+			VOP_UNLOCK(tvp, 0);
 			vn_lock(tdvp, LK_EXCLUSIVE | LK_RETRY);
-			error = pefs_enccn_get(&tenccn, tdvp, tvp, tcnp);
+			txenccn.pec_cn.cn_nameiop = DELETE;
+			error = VOP_LOOKUP(ltdvp, &ltvp, &txenccn.pec_cn);
 			if (error == 0) {
-				error = VOP_REMOVE(ltdvp, PEFS_LOWERVP(tvp),
-				    &tenccn.pec_cn);
+				error = VOP_REMOVE(ltdvp, ltvp,
+				    &txenccn.pec_cn);
 				PEFSDEBUG("pefs_rename: remove old: %s\n",
-				    tenccn.pec_cn.cn_nameptr);
-				VP_TO_PN(tvp)->pn_flags |= PN_WANTRECYCLE;
-				cache_purge(tvp);
-				vgone(tvp);
+				    txenccn.pec_cn.cn_nameptr);
+				VOP_UNLOCK(ltvp, 0);
 			}
 			VOP_UNLOCK(tdvp, 0);
-			VOP_UNLOCK(tvp, 0);
+			pefs_enccn_free(&txenccn);
 		}
 		cache_purge(fdvp);
 		cache_purge(fvp);
-		if (tvp != NULL && tvp->v_type == VDIR) {
-			vn_lock(fvp, LK_EXCLUSIVE | LK_RETRY);
-			VP_TO_PN(fvp)->pn_flags |= PN_WANTRECYCLE;
-			vgone(fvp);
-			VOP_UNLOCK(fvp, 0);
-		}
 	}
 
 	pefs_enccn_free(&tenccn);
