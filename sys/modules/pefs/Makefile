@@ -13,10 +13,10 @@ DEBUG_FLAGS+= -g
 
 CFLAGS+= -I${.CURDIR}/../../
 
-# Temporally build crypto/hmac and crypto/salsa20 into pefs module
-.PATH:	${.CURDIR}/../../crypto/hmac ${.CURDIR}/../../crypto/salsa20
+# Temporally build crypto/hmac into pefs module
+.PATH:	${.CURDIR}/../../crypto/hmac
 
-SRCS+=	salsa20.c hmac_sha512.c
+SRCS+=	hmac_sha512.c
 
 .include <bsd.kmod.mk>
 
