@@ -379,6 +379,7 @@ pefs_node_get(struct mount *mp, struct vnode *lvp, struct vnode **vpp,
 	struct vnode *vp;
 	int error;
 
+	ASSERT_VOP_LOCKED(lvp, "pefs_node_get");
 	/* Lookup the hash firstly */
 	*vpp = pefs_nodehash_get(mp, lvp);
 	if (*vpp != NULL) {
@@ -441,11 +442,15 @@ pefs_node_get(struct mount *mp, struct vnode *lvp, struct vnode **vpp,
 		vp->v_vnlock = &vp->v_lock;
 		pn->pn_lowervp = NULL;
 		vrele(vp);
+		MPASS(PEFS_LOWERVP(*vpp) == lvp);
+		ASSERT_VOP_LOCKED(*vpp, "pefs_node_get: duplicate");
 		return (0);
 	}
 	if (vp->v_type == VDIR)
 		pn->pn_dircache = pefs_dircache_get();
 	*vpp = vp;
+	MPASS(PEFS_LOWERVP(*vpp) == lvp);
+	ASSERT_VOP_LOCKED(*vpp, "pefs_node_get");
 
 	return (0);
 }
@@ -695,7 +700,7 @@ pefs_checkvp(struct vnode *vp, char *fil, int lno)
 		panic("pefs_checkvp: on non-null-node");
 	};
 #endif
-	if (a->pefs_lowervp == NULLVP) {
+	if (a->pn_lowervp == NULLVP) {
 		/* Should never happen */
 		int i; u_long *p;
 		printf("vp = %p, ZERO ptr\n", (void *)vp);
@@ -710,7 +715,7 @@ pefs_checkvp(struct vnode *vp, char *fil, int lno)
 		VI_UNLOCK(vp);
 		interlock = 1;
 	}
-	if (vrefcnt(a->pefs_lowervp) < 1) {
+	if (vrefcnt(a->pn_lowervp) < 1) {
 		int i; u_long *p;
 		printf("vp = %p, unref'ed lowervp\n", (void *)vp);
 		for (p = (u_long *) a, i = 0; i < 8; i++)
