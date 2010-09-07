@@ -1011,7 +1011,8 @@ pefs_rename(struct vop_rename_args *ap)
 			ASSERT_VOP_ELOCKED(tvp, "pefs_rename");
 			cache_purge(tvp);
 			VP_TO_PN(tvp)->pn_flags |= PN_WANTRECYCLE;
-			VOP_UNLOCK(tvp, 0);
+			vput(tvp);
+			tvp = NULL;
 			vn_lock(tdvp, LK_EXCLUSIVE | LK_RETRY);
 			txenccn.pec_cn.cn_nameiop = DELETE;
 			error = VOP_LOOKUP(ltdvp, &ltvp, &txenccn.pec_cn);
@@ -1020,14 +1021,17 @@ pefs_rename(struct vop_rename_args *ap)
 				    &txenccn.pec_cn);
 				PEFSDEBUG("pefs_rename: remove old: %s\n",
 				    txenccn.pec_cn.cn_nameptr);
-				VOP_UNLOCK(ltvp, 0);
+				vput(ltvp);
+				ltvp = NULL;
 			}
 			VOP_UNLOCK(tdvp, 0);
 			pefs_enccn_free(&txenccn);
-		}
+		} else if (tvp != NULL)
+			ASSERT_VOP_UNLOCKED(tvp, "pefs_rename");
 		cache_purge(fdvp);
 		cache_purge(fvp);
-	}
+	} else if (tvp != NULL && ltvp == NULL)
+		VOP_UNLOCK(tvp, 0);
 
 	pefs_enccn_free(&tenccn);
 	pefs_enccn_free(&fenccn);
