@@ -873,6 +873,7 @@ pefs_rename(struct vop_rename_args *ap)
 	struct vnode *tdvp = ap->a_tdvp;
 	struct vnode *ltdvp = PEFS_LOWERVP(tdvp);
 	struct vnode *tvp = ap->a_tvp;
+	struct vnode *txvp = NULL;
 	struct vnode *ltvp = (tvp == NULL ? NULL : PEFS_LOWERVP(tvp));
 	struct componentname *fcnp = ap->a_fcnp;
 	struct componentname *tcnp = ap->a_tcnp;
@@ -977,9 +978,19 @@ pefs_rename(struct vop_rename_args *ap)
 			if (error == 0)
 				error = pefs_enccn_get(&txenccn, tdvp, tvp,
 				    tcnp);
-			if (error == 0)
+			if (error == 0) {
+				txvp = tvp;
+				tvp = NULL;
 				ltvp = NULL;
-			else
+				VP_TO_PN(txvp)->pn_flags |= PN_WANTRECYCLE;
+				cache_purge(txvp);
+				VOP_UNLOCK(txvp, 0);
+				error = VOP_LOOKUP(ltdvp, &tvp, &tenccn.pec_cn);
+				if (error == 0)
+					panic("pefs_rename: dummy rename target exists");
+				MPASS(tvp == NULL);
+				error = 0;
+			} else
 				pefs_enccn_free(&txenccn);
 		}
 	} else
@@ -1002,17 +1013,13 @@ pefs_rename(struct vop_rename_args *ap)
 	    &tenccn.pec_cn);
 
 	if (error == 0) {
-		if (tvp != NULL && fvp->v_type == VREG) {
+		if (txvp != NULL) {
 			/*
 			 * Remove old file. Double rename is not performed to
 			 * prevent data loss in case of error
 			 */
 			ASSERT_VOP_UNLOCKED(tdvp, "pefs_rename");
-			ASSERT_VOP_ELOCKED(tvp, "pefs_rename");
-			cache_purge(tvp);
-			VP_TO_PN(tvp)->pn_flags |= PN_WANTRECYCLE;
-			vput(tvp);
-			tvp = NULL;
+			ASSERT_VOP_UNLOCKED(txvp, "pefs_rename");
 			vn_lock(tdvp, LK_EXCLUSIVE | LK_RETRY);
 			txenccn.pec_cn.cn_nameiop = DELETE;
 			error = VOP_LOOKUP(ltdvp, &ltvp, &txenccn.pec_cn);
@@ -1022,16 +1029,13 @@ pefs_rename(struct vop_rename_args *ap)
 				PEFSDEBUG("pefs_rename: remove old: %s\n",
 				    txenccn.pec_cn.cn_nameptr);
 				vput(ltvp);
-				ltvp = NULL;
 			}
 			VOP_UNLOCK(tdvp, 0);
 			pefs_enccn_free(&txenccn);
-		} else if (tvp != NULL)
-			ASSERT_VOP_UNLOCKED(tvp, "pefs_rename");
+		}
 		cache_purge(fdvp);
 		cache_purge(fvp);
-	} else if (tvp != NULL && ltvp == NULL)
-		VOP_UNLOCK(tvp, 0);
+	}
 
 	pefs_enccn_free(&tenccn);
 	pefs_enccn_free(&fenccn);
@@ -1043,6 +1047,8 @@ done:
 	vrele(tdvp);
 	if (tvp != NULL)
 		vrele(tvp);
+	if (txvp != NULL)
+		vrele(txvp);
 
 	return (error);
 
