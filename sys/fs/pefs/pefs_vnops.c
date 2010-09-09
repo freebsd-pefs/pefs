@@ -93,6 +93,8 @@ __FBSDID("$FreeBSD$");
 #define DIRENT_MINSIZE (sizeof(struct dirent) - (MAXNAMLEN + 1))
 #define DIRENT_MAXSIZE (sizeof(struct dirent))
 
+CTASSERT(PEFS_SECTOR_SIZE == PAGE_SIZE);
+
 struct pefs_enccn {
 	struct componentname pec_cn;
 	void *pec_buf;
@@ -340,7 +342,7 @@ pefs_enccn_lookup(struct pefs_enccn *pec, struct vnode *dvp,
 	eofflag = 0;
 	cache = NULL;
 	ctx = pefs_ctx_get();
-	pefs_chunk_create(&pc, dpn, PAGE_SIZE);
+	pefs_chunk_create(&pc, dpn, PEFS_SECTOR_SIZE);
 	dpn_key = pefs_node_key(dpn);
 	pefs_dircache_beginupdate(dpn->pn_dircache, dgen);
 	while (!eofflag) {
@@ -664,9 +666,9 @@ pefs_truncate(struct vnode *vp, u_quad_t nsize, struct ucred *cred)
 	PEFSDEBUG("pefs_truncate: old size 0x%jx, new size 0x%jx\n",
 	    osize, nsize);
 
-	oskip = osize & PAGE_MASK;
-	nskip = nsize & PAGE_MASK;
-	pefs_chunk_create(&pc, pn, PAGE_SIZE);
+	oskip = osize & PEFS_SECTOR_MASK;
+	nskip = nsize & PEFS_SECTOR_MASK;
+	pefs_chunk_create(&pc, pn, PEFS_SECTOR_SIZE);
 
 	if (nsize < osize && nskip != 0) {
 		pefs_chunk_setsize(&pc, nskip);
@@ -689,8 +691,8 @@ pefs_truncate(struct vnode *vp, u_quad_t nsize, struct ucred *cred)
 		goto out;
 
 	diff = nsize - osize;
-	if (oskip != 0 || diff < PAGE_SIZE) {
-		pefs_chunk_setsize(&pc, qmin(PAGE_SIZE - oskip, diff));
+	if (oskip != 0 || diff < PEFS_SECTOR_SIZE) {
+		pefs_chunk_setsize(&pc, qmin(PEFS_SECTOR_SIZE - oskip, diff));
 		pefs_chunk_zero(&pc);
 		puio = pefs_chunk_uio(&pc, osize, UIO_WRITE);
 		PEFSDEBUG("pefs_truncate: extending file: "
@@ -1778,9 +1780,9 @@ pefs_readmapped(struct vnode *vp, struct uio *uio, ssize_t bsize,
 	ssize_t msize;
 	int error;
 
-	MPASS(bsize <= PAGE_SIZE);
+	MPASS(bsize <= PEFS_SECTOR_SIZE);
 	*mp = NULL;
-	moffset = uio->uio_offset & PAGE_MASK;
+	moffset = uio->uio_offset & PEFS_SECTOR_MASK;
 	msize = bsize - moffset;
 
 	VM_OBJECT_LOCK(vp->v_object);
@@ -1817,7 +1819,7 @@ lookupvpg:
 static inline ssize_t
 pefs_bufsize(struct uio *uio, ssize_t maxsize)
 {
-	return (qmin(roundup2(uio->uio_resid, PAGE_SIZE), maxsize));
+	return (qmin(roundup2(uio->uio_resid, PEFS_SECTOR_SIZE), maxsize));
 }
 
 static int
@@ -1872,7 +1874,7 @@ pefs_read_int(struct vnode *vp, struct uio *uio, int ioflag, struct ucred *cred,
 
 	mapped = pefs_ismapped(vp);
 	if (mapped != 0)
-		bsize = PAGE_SIZE;
+		bsize = PEFS_SECTOR_SIZE;
 	else
 		bsize = pefs_bufsize(uio, DFLTPHYS);
 
@@ -1881,7 +1883,7 @@ pefs_read_int(struct vnode *vp, struct uio *uio, int ioflag, struct ucred *cred,
 	nocopy = 0;
 	while (uio->uio_resid > 0 && uio->uio_offset < fsize) {
 		MPASS(nocopy == 0);
-		bskip = uio->uio_offset & PAGE_MASK;
+		bskip = uio->uio_offset & PEFS_SECTOR_MASK;
 		poffset = uio->uio_offset - bskip;
 		bsize = pefs_bufsize(uio, bsize);
 		bsize = qmin(fsize - poffset, bsize);
@@ -1955,8 +1957,8 @@ pefs_writemapped(struct vnode *vp, struct uio *uio,
 	vm_pindex_t idx;
 	int error;
 
-	MPASS(bsize <= PAGE_SIZE);
-	moffset = uio->uio_offset & PAGE_MASK;
+	MPASS(bsize <= PEFS_SECTOR_SIZE);
+	moffset = uio->uio_offset & PEFS_SECTOR_MASK;
 
 	VM_OBJECT_LOCK(vp->v_object);
 lookupvpg:
@@ -2070,7 +2072,7 @@ pefs_write_int(struct vnode *vp, struct uio *uio, int ioflag,
 
 	mapped = pefs_ismapped(vp);
 	if (mapped != 0)
-		bmaxsize = PAGE_SIZE;
+		bmaxsize = PEFS_SECTOR_SIZE;
 	else
 		bmaxsize = pefs_bufsize(uio, DFLTPHYS);
 	bsize = bmaxsize;
@@ -2086,15 +2088,15 @@ pefs_write_int(struct vnode *vp, struct uio *uio, int ioflag,
 
 	pefs_chunk_create(&pc, pn, bsize);
 	while (uio->uio_resid > 0) {
-		bskip = uio->uio_offset & PAGE_MASK;
+		bskip = uio->uio_offset & PEFS_SECTOR_MASK;
 		poffset = uio->uio_offset - bskip;
 		if (bskip != 0)
-			bsize = PAGE_SIZE;
+			bsize = PEFS_SECTOR_SIZE;
 		else {
 			/* Exclude last incomplete page from the chunk */
-			bsize = rounddown(uio->uio_resid, PAGE_SIZE);
+			bsize = rounddown(uio->uio_resid, PEFS_SECTOR_SIZE);
 			if (bsize == 0)
-				bsize = PAGE_SIZE;
+				bsize = PEFS_SECTOR_SIZE;
 			bsize = qmin(bsize, bmaxsize);
 		}
 		bsize = qmin(nsize - poffset, bsize);
@@ -2112,8 +2114,8 @@ pefs_write_int(struct vnode *vp, struct uio *uio, int ioflag,
 				break;
 			}
 		}
-		if (bskip != 0 || (bskip + uio->uio_resid) < PAGE_SIZE) {
-			MPASS(pc.pc_size <= PAGE_SIZE);
+		if (bskip != 0 || (bskip + uio->uio_resid) < PEFS_SECTOR_SIZE) {
+			MPASS(pc.pc_size <= PEFS_SECTOR_SIZE);
 			puio = pefs_chunk_uio(&pc, poffset, UIO_READ);
 			if (poffset < fsize) {
 				error = pefs_read_int(vp, puio, IO_UNIT, cred,

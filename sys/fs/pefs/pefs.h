@@ -26,6 +26,9 @@
  * $FreeBSD$
  */
 
+#define PEFS_SECTOR_SIZE		4096
+#define PEFS_SECTOR_MASK		(PEFS_SECTOR_SIZE - 1)
+
 #define PEFS_ALG_INVALID		0
 #define PEFS_ALG_AES_XTS		4
 #define PEFS_ALG_CAMELLIA_XTS		5

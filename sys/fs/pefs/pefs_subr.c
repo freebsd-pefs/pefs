@@ -590,9 +590,9 @@ pefs_chunk_create(struct pefs_chunk *pc, struct pefs_node *pn, size_t size)
 		    (intmax_t)size);
 
 	nodebuf = 0;
-	wantbufsize = (size <= PAGE_SIZE ? PAGE_SIZE : DFLTPHYS);
+	wantbufsize = (size <= PEFS_SECTOR_SIZE ? PEFS_SECTOR_SIZE : DFLTPHYS);
 	if (pn != NULL) {
-		nodebuf = (size <= PAGE_SIZE ? PN_LOCKBUF_SMALL :
+		nodebuf = (size <= PEFS_SECTOR_SIZE ? PN_LOCKBUF_SMALL :
 		    PN_LOCKBUF_LARGE);
 		VI_LOCK(pn->pn_vnode);
 		if ((pn->pn_flags & nodebuf) == 0) {

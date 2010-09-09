@@ -337,12 +337,12 @@ pefs_data_encrypt(struct pefs_tkey *ptk, off_t offset, struct pefs_chunk *pc)
 	ssize_t resid, block;
 
 	MPASS(ptk->ptk_key != NULL);
-	MPASS((offset & PAGE_MASK) == 0);
+	MPASS((offset & PEFS_SECTOR_MASK) == 0);
 
 	buf = pc->pc_base;
 	resid = pc->pc_size;
 	while (resid > 0) {
-		block = qmin(resid, PAGE_SIZE);
+		block = qmin(resid, PEFS_SECTOR_SIZE);
 		pefs_xts_block_encrypt(ptk->ptk_key->pk_alg,
 		    ptk->ptk_key->pk_tweak_ctx, ptk->ptk_key->pk_data_ctx,
 		    offset, ptk->ptk_tweak, block,
@@ -361,24 +361,24 @@ pefs_data_decrypt(struct pefs_tkey *ptk, off_t offset, struct pefs_chunk *pc)
 	char *buf, *end;
 
 	MPASS(ptk->ptk_key != NULL);
-	MPASS((offset & PAGE_MASK) == 0);
+	MPASS((offset & PEFS_SECTOR_MASK) == 0);
 
 	buf = (char *)pc->pc_base;
 	end = buf + pc->pc_size;
 	while (buf < end) {
-		if ((end - buf) >= PAGE_SIZE) {
+		if ((end - buf) >= PEFS_SECTOR_SIZE) {
 			p = (long *)buf;
-			resid = PAGE_SIZE / sizeof(long);
+			resid = PEFS_SECTOR_SIZE / sizeof(long);
 			for (; resid > 0; resid--)
 				if (*(p++) != 0)
 					break;
 			if (resid == 0) {
-				bzero(buf, PAGE_SIZE);
-				offset += PAGE_SIZE;
-				buf += PAGE_SIZE;
+				bzero(buf, PEFS_SECTOR_SIZE);
+				offset += PEFS_SECTOR_SIZE;
+				buf += PEFS_SECTOR_SIZE;
 				continue;
 			}
-			resid = PAGE_SIZE;
+			resid = PEFS_SECTOR_SIZE;
 		} else
 			resid = end - buf;
 		pefs_xts_block_decrypt(ptk->ptk_key->pk_alg,
