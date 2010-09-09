@@ -482,12 +482,25 @@ pefs_node_get_lookupkey(struct mount *mp, struct vnode *lvp, struct vnode **vpp,
 	return (pefs_node_get(mp, lvp, vpp, pefs_node_init_lookupkey, cred));
 }
 
+static inline void
+pefs_node_free(struct pefs_node *pn)
+{
+	struct vnode *lowervp;
+	int vfslocked;
+
+	lowervp = pn->pn_lowervp_dead;
+	uma_zfree(pefs_node_zone, pn);
+	if (lowervp != NULL) {
+		vfslocked = VFS_LOCK_GIANT(lowervp->v_mount);
+		vrele(lowervp);
+		VFS_UNLOCK_GIANT(vfslocked);
+	}
+}
+
 static void
 pefs_node_free_proc(void *context __unused, int pending __unused)
 {
 	struct pefs_node *pn;
-	struct vnode *lowervp;
-	int vfslocked = 0;
 
 	while (1) {
 		mtx_lock(&pefs_node_listmtx);
@@ -498,15 +511,8 @@ pefs_node_free_proc(void *context __unused, int pending __unused)
 		}
 		LIST_REMOVE(pn, pn_listentry);
 		mtx_unlock(&pefs_node_listmtx);
-		lowervp = pn->pn_lowervp_dead;
-		uma_zfree(pefs_node_zone, pn);
-		if (lowervp != NULL) {
-			if (!vfslocked)
-				vfslocked = VFS_LOCK_GIANT(lowervp->v_mount);
-			vrele(lowervp);
-		}
+		pefs_node_free(pn);
 	}
-	VFS_UNLOCK_GIANT(vfslocked);
 }
 
 /*
@@ -521,9 +527,16 @@ pefs_node_asyncfree(struct pefs_node *pn)
 	mtx_lock(&pefs_node_listmtx);
 	pefs_nodes--;
 	LIST_REMOVE(pn, pn_listentry);
-	LIST_INSERT_HEAD(&pefs_node_freelist, pn, pn_listentry);
-	mtx_unlock(&pefs_node_listmtx);
-	taskqueue_enqueue(pefs_taskq, &pefs_task_freenode);
+	/* XXX Find a better way to check for safe context */
+	if (memcmp(curthread->td_name, "vnlru", 6) == 0) {
+		mtx_unlock(&pefs_node_listmtx);
+		pefs_node_free(pn);
+		return;
+	} else {
+		LIST_INSERT_HEAD(&pefs_node_freelist, pn, pn_listentry);
+		mtx_unlock(&pefs_node_listmtx);
+		taskqueue_enqueue(pefs_taskq, &pefs_task_freenode);
+	}
 }
 
 void
