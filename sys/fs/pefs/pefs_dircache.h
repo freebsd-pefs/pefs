@@ -27,72 +27,71 @@
  */
 
 
-#define PEFS_CACHENAME_MAXLEN		PEFS_NAME_PTON_SIZE(MAXNAMLEN)
+#define	PEFS_CACHENAME_MAXLEN		PEFS_NAME_PTON_SIZE(MAXNAMLEN)
 
 struct pefs_dircache_entry;
 LIST_HEAD(pefs_dircache_listhead, pefs_dircache_entry);
 
-#define PD_UPDATING			0x01
-#define PD_SWAPEDHEADS			0x02
+#define	PD_UPDATING			0x01
+#define	PD_SWAPEDHEADS			0x02
 
 struct pefs_dircache {
-	struct sx pd_lock;
+	struct sx		pd_lock;
 	struct pefs_dircache_listhead pd_heads[2];
-	u_long pd_gen;
-	int pd_flags;
+	u_long			pd_gen;
+	int			pd_flags;
 };
 
 struct pefs_dircache_entry {
 	LIST_ENTRY(pefs_dircache_entry) pde_dir_entry;
 	LIST_ENTRY(pefs_dircache_entry) pde_hash_entry;
 	LIST_ENTRY(pefs_dircache_entry) pde_enchash_entry;
-	struct pefs_dircache *pde_dircache;
-	struct pefs_tkey pde_tkey;
-	u_long pde_gen;
-	uint32_t pde_namehash;
-	uint32_t pde_encnamehash;
-	uint16_t pde_namelen;
-	uint16_t pde_encnamelen;
-	char pde_name[PEFS_CACHENAME_MAXLEN + 1];
-	char pde_encname[MAXNAMLEN + 1];
+	struct pefs_dircache	*pde_dircache;
+	struct pefs_tkey	pde_tkey;
+	u_long			pde_gen;
+	uint32_t		pde_namehash;
+	uint32_t		pde_encnamehash;
+	uint16_t		pde_namelen;
+	uint16_t		pde_encnamelen;
+	char			pde_name[PEFS_CACHENAME_MAXLEN + 1];
+	char			pde_encname[MAXNAMLEN + 1];
 };
 
-extern int pefs_dircache_enable;
+extern int			pefs_dircache_enable;
 
-void pefs_dircache_init(void);
-void pefs_dircache_uninit(void);
+void	pefs_dircache_init(void);
+void	pefs_dircache_uninit(void);
 
-struct pefs_dircache * pefs_dircache_get(void);
-void pefs_dircache_free(struct pefs_dircache *pd);
-void pefs_dircache_update(struct pefs_dircache_entry *pde);
-void pefs_dircache_beginupdate(struct pefs_dircache *pd, u_long gen);
-void pefs_dircache_endupdate(struct pefs_dircache *pd);
-void pefs_dircache_abortupdate(struct pefs_dircache *pd);
-struct pefs_dircache_entry * pefs_dircache_lookup(struct pefs_dircache *pd,
-    char const *name, size_t name_len);
-struct pefs_dircache_entry * pefs_dircache_enclookup(struct pefs_dircache *pd,
-    char const *encname, size_t encname_len);
-struct pefs_dircache_entry * pefs_dircache_insert(struct pefs_dircache *pd,
-    struct pefs_tkey *ptk, char const *name, size_t name_len,
-    char const *encname, size_t encname_len);
+struct pefs_dircache	*pefs_dircache_get(void);
+void	pefs_dircache_free(struct pefs_dircache *pd);
+void	pefs_dircache_update(struct pefs_dircache_entry *pde);
+void	pefs_dircache_beginupdate(struct pefs_dircache *pd, u_long gen);
+void	pefs_dircache_endupdate(struct pefs_dircache *pd);
+void	pefs_dircache_abortupdate(struct pefs_dircache *pd);
+struct pefs_dircache_entry *pefs_dircache_lookup(struct pefs_dircache *pd,
+	    char const *name, size_t name_len);
+struct pefs_dircache_entry *pefs_dircache_enclookup(struct pefs_dircache *pd,
+	    char const *encname, size_t encname_len);
+struct pefs_dircache_entry *pefs_dircache_insert(struct pefs_dircache *pd,
+	    struct pefs_tkey *ptk, char const *name, size_t name_len,
+	    char const *encname, size_t encname_len);
 
-static inline void
+static __inline void
 pefs_dircache_lock(struct pefs_dircache *pd)
 {
 	sx_slock(&pd->pd_lock);
 }
 
-static inline void
+static __inline void
 pefs_dircache_unlock(struct pefs_dircache *pd)
 {
 	sx_unlock(&pd->pd_lock);
 }
 
-static inline int
+static __inline int
 pefs_dircache_valid(struct pefs_dircache *pd, u_long gen)
 {
 	sx_assert(&pd->pd_lock, SA_LOCKED);
 
 	return (gen == pd->pd_gen && gen != 0);
 }
-

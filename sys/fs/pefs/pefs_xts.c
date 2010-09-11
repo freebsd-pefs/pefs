@@ -39,10 +39,10 @@
 #include <string.h>
 #endif
 
-#define XTS_BLK_BYTES   	16
-#define XTS_BLK_MASK	   	(XTS_BLK_BYTES - 1)
+#define	XTS_BLK_BYTES		16
+#define	XTS_BLK_MASK		(XTS_BLK_BYTES - 1)
 
-static inline void
+static __inline void
 xor128(void *dst, const void *src1, const void *src2)
 {
 	const uint64_t *s1 = (const uint64_t *)src1;
@@ -53,7 +53,7 @@ xor128(void *dst, const void *src1, const void *src2)
 	d[1] = s1[1] ^ s2[1];
 }
 
-static inline int
+static __inline int
 shl128(uint64_t *d, const uint64_t *s)
 {
 	int c0, c1;
@@ -66,7 +66,7 @@ shl128(uint64_t *d, const uint64_t *s)
 	return (c1);
 }
 
-static inline void
+static __inline void
 gf_mul128(uint64_t *dst, const uint64_t *src)
 {
 	static const uint8_t gf_128_fdbk = 0x87;
@@ -77,7 +77,7 @@ gf_mul128(uint64_t *dst, const uint64_t *src)
 		((uint8_t *)dst)[0] ^= gf_128_fdbk;
 }
 
-static inline void
+static __inline void
 xts_fullblock(algop_crypt_t *data_crypt, const struct pefs_ctx *data_ctx,
     uint64_t *tweak, const uint8_t *src, uint8_t *dst)
 {
@@ -87,7 +87,7 @@ xts_fullblock(algop_crypt_t *data_crypt, const struct pefs_ctx *data_ctx,
 	gf_mul128(tweak, tweak);
 }
 
-static inline void
+static __inline void
 xts_lastblock(algop_crypt_t *data_crypt, const struct pefs_ctx *data_ctx,
     uint64_t *tweak, const uint8_t *src, uint8_t *dst, int len)
 {
@@ -103,7 +103,7 @@ xts_lastblock(algop_crypt_t *data_crypt, const struct pefs_ctx *data_ctx,
 	xor128(dst, dst, tweak);
 }
 
-static inline void
+static __inline void
 xts_start(const struct pefs_alg *alg,
     const struct pefs_ctx *tweak_ctx, const struct pefs_ctx *data_ctx,
     uint64_t *tweak, uint64_t sector, const uint8_t *xtweak, int len,
@@ -119,7 +119,7 @@ xts_start(const struct pefs_alg *alg,
 	alg->pa_encrypt(tweak_ctx, (uint8_t *)tweak, (uint8_t *)tweak);
 
 	if (len < XTS_BLK_BYTES) {
-		/* 
+		/*
 		 * Note that encryption/decryption of sectors smaller then
 		 * 128 bits is not defined by IEEE P1619 standard.
 		 * To work around it encrypt such sector in CTR mode reusing

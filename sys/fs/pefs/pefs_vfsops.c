@@ -47,15 +47,20 @@ __FBSDID("$FreeBSD$");
 
 #include <fs/pefs/pefs.h>
 
-static const char *pefs_dircache_support[] = {
-	"zfs", NULL
+static const char		*pefs_dircache_support[] = {
+	"zfs",
+	NULL
+};
+
+static const char		*pefs_opts[] = {
+	"from",
+	"export",
+	"dircache",
+	"nodircache",
+	NULL
 };
 
 static MALLOC_DEFINE(M_PEFSMNT, "pefs_mount", "PEFS mount structure");
-
-static const char *pefs_opts[] = {
-	"from", "export", "dircache", "nodircache", NULL
-};
 
 static void
 dircache_init(struct mount *mp, int opt, struct pefs_mount *pm)
@@ -180,7 +185,7 @@ pefs_mount(struct mount *mp)
 	if (isvnunlocked && !VOP_ISLOCKED(mp->mnt_vnodecovered))
 		vn_lock(mp->mnt_vnodecovered, LK_EXCLUSIVE | LK_RETRY);
 
-	if (error)
+	if (error != 0)
 		return (error);
 	NDFREE(ndp, NDF_ONLY_PNBUF);
 
@@ -285,7 +290,7 @@ pefs_unmount(struct mount *mp, int mntflags)
 
 	/* There is 1 extra root vnode reference (pm_rootvp). */
 	error = vflush(mp, 1, flags, curthread);
-	if (error)
+	if (error != 0)
 		return (error);
 
 	/*
@@ -330,7 +335,7 @@ pefs_statfs(struct mount *mp, struct statfs *sbp)
 	bzero(&mstat, sizeof(mstat));
 
 	error = VFS_STATFS(VFS_TO_PEFS(mp)->pm_lowervfs, &mstat);
-	if (error)
+	if (error != 0)
 		return (error);
 
 	/* now copy across the "interesting" information and fake the rest */
@@ -360,7 +365,7 @@ pefs_vget(struct mount *mp, ino_t ino, int flags, struct vnode **vpp)
 {
 	int error;
 	error = VFS_VGET(VFS_TO_PEFS(mp)->pm_lowervfs, ino, flags, vpp);
-	if (error)
+	if (error != 0)
 		return (error);
 
 	return (pefs_node_get_lookupkey(mp, *vpp, vpp, curthread->td_ucred));
@@ -372,13 +377,11 @@ pefs_fhtovp(struct mount *mp, struct fid *fidp, struct vnode **vpp)
 	int error;
 
 	error = VFS_FHTOVP(VFS_TO_PEFS(mp)->pm_lowervfs, fidp, vpp);
-	if (error)
+	if (error != 0)
 		return (error);
 
 	error = pefs_node_get_lookupkey(mp, *vpp, vpp, curthread->td_ucred);
-	PEFSDEBUG("pefs_fhtovp: error=%d; vp=%p; v_object=%p\n", error,
-			!error ? *vpp : NULL, !error ? (*vpp)->v_object : NULL);
-	if (error)
+	if (error != 0)
 		return (error);
 	vnode_create_vobject(*vpp, 0, curthread);
 	return (error);
@@ -409,4 +412,3 @@ static struct vfsops pefs_vfsops = {
 
 VFS_SET(pefs_vfsops, pefs, VFCF_LOOPBACK);
 MODULE_DEPEND(pefs, crypto, 1, 1, 1);
-

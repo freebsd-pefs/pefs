@@ -54,31 +54,31 @@ __FBSDID("$FreeBSD$");
 #include <fs/pefs/pefs.h>
 #include <fs/pefs/pefs_dircache.h>
 
-SYSCTL_NODE(_vfs, OID_AUTO, pefs, CTLFLAG_RW, 0, "PEFS filesystem");
-
-typedef int (pefs_node_init_fn)(struct mount *mp, struct pefs_node *pn,
-    void *context);
+typedef int	pefs_node_init_fn(struct mount *mp, struct pefs_node *pn,
+	    void *context);
 LIST_HEAD(pefs_node_listhead, pefs_node);
 
-static void pefs_node_free_proc(void *, int);
+static struct taskqueue		*pefs_taskq;
+static struct task		pefs_task_freenode;
 
-static struct taskqueue *pefs_taskq;
-static struct task pefs_task_freenode;
-
-static struct mtx pefs_node_listmtx;
+static struct mtx		pefs_node_listmtx;
 
 static struct pefs_node_listhead pefs_node_freelist;
 static struct pefs_node_listhead *pefs_nodehash_tbl;
-static u_long pefs_nodehash_mask;
+static u_long			pefs_nodehash_mask;
+
+static uma_zone_t		pefs_node_zone;
 
 MALLOC_DEFINE(M_PEFSHASH, "pefs_hash", "PEFS hash table");
 MALLOC_DEFINE(M_PEFSBUF, "pefs_buf", "PEFS buffers");
 
-static uma_zone_t pefs_node_zone;
+SYSCTL_NODE(_vfs, OID_AUTO, pefs, CTLFLAG_RW, 0, "PEFS filesystem");
 
-static u_int pefs_nodes;
+static u_int	pefs_nodes;
 SYSCTL_UINT(_vfs_pefs, OID_AUTO, nodes, CTLFLAG_RD, &pefs_nodes, 0,
     "Allocated nodes");
+
+static void	pefs_node_free_proc(void *, int);
 
 /*
  * Initialise cache headers
@@ -123,7 +123,7 @@ pefs_uninit(struct vfsconf *vfsp)
 	return (0);
 }
 
-static inline struct pefs_node_listhead *
+static __inline struct pefs_node_listhead *
 pefs_nodehash_gethead(struct vnode *vp)
 {
 	uint32_t v;
@@ -214,7 +214,7 @@ pefs_insmntque_dtr(struct vnode *vp, void *_pn)
 	pefs_key_release(pn->pn_tkey.ptk_key);
 	uma_zfree(pefs_node_zone, pn);
 	vp->v_op = &dead_vnodeops;
-	(void) vn_lock(vp, LK_EXCLUSIVE | LK_RETRY);
+	vn_lock(vp, LK_EXCLUSIVE | LK_RETRY);
 	vgone(vp);
 	vput(vp);
 }
@@ -233,22 +233,20 @@ pefs_node_lookup_name(struct vnode *lvp, struct vnode *ldvp, struct ucred *cred,
 		dlocked = VOP_ISLOCKED(ldvp);
 		if (dlocked)
 			VOP_UNLOCK(ldvp, 0);
-	} else {
+	} else
 		dlocked = 0;
-	}
 
 	vref(lvp);
 	VOP_UNLOCK(lvp, 0);
 	nldvp = lvp;
 	error = vn_vptocnp(&nldvp, cred, encname, encname_len);
-	PEFSDEBUG("pefs_node_lookup_name: vn_vptocnp(dvp) result %d; nldvp=%p; ldvp=%p, len=%d\n", error, nldvp, ldvp, *encname_len);
-	if (!error)
+	if (error == 0)
 		vdrop(nldvp);
 	vrele(lvp);
 	vn_lock(lvp, locked | LK_RETRY);
 	if (ldvp && dlocked)
 		vn_lock(ldvp, dlocked | LK_RETRY);
-	if (error)
+	if (error != 0)
 		return (ENOENT);
 
 	memcpy(encname, encname + *encname_len, buflen - *encname_len);
@@ -272,7 +270,7 @@ pefs_node_lookup_key(struct pefs_mount *pm, struct vnode *lvp,
 	encname_len = MAXNAMLEN + 1;
 
 	error = pefs_node_lookup_name(lvp, ldvp, cred, encname, &encname_len);
-	if (error) {
+	if (error != 0) {
 		free(namebuf, M_PEFSBUF);
 		return (error);
 	}
@@ -280,14 +278,13 @@ pefs_node_lookup_key(struct pefs_mount *pm, struct vnode *lvp,
 	PEFSDEBUG("pefs_node_lookup_key: encname=%.*s\n", encname_len, encname);
 
 	name_len = pefs_name_decrypt(NULL, pefs_rootkey(pm), ptk,
-			encname, encname_len,
-			namebuf, MAXNAMLEN + 1);
+	    encname, encname_len, namebuf, MAXNAMLEN + 1);
 
-	if (name_len > 0) {
+	if (name_len > 0)
 		pefs_key_ref(ptk->ptk_key);
-	} else {
-		PEFSDEBUG("pefs_node_lookup_key: not found: %.*s\n", encname_len, encname);
-	}
+	else
+		PEFSDEBUG("pefs_node_lookup_key: not found: %.*s\n",
+		    encname_len, encname);
 
 	free(namebuf, M_PEFSBUF);
 
@@ -319,7 +316,7 @@ pefs_node_init_lookupkey(struct mount *mp, struct pefs_node *pn,
 	int error;
 
 	KASSERT(mp->mnt_data != NULL,
-	    ("pefs_node_get_lookupkey called for uninitialized mount point?"));
+	    ("pefs_node_get_lookupkey called for uninitialized mount point"));
 
 	if (pefs_rootkey(VFS_TO_PEFS(mp)) == NULL)
 		return (0);
@@ -382,21 +379,20 @@ pefs_node_get(struct mount *mp, struct vnode *lvp, struct vnode **vpp,
 	error = init_fn(mp, pn, context);
 	MPASS(!(((pn->pn_flags & PN_HASKEY) == 0) ^
 	    (pn->pn_tkey.ptk_key == NULL)));
-	if (error) {
+	if (error != 0) {
 		uma_zfree(pefs_node_zone, pn);
 		return (error);
 	}
 
 	error = getnewvnode("pefs", mp, &pefs_vnodeops, &vp);
-	if (error) {
+	if (error != 0) {
 		pefs_key_release(pn->pn_tkey.ptk_key);
 		uma_zfree(pefs_node_zone, pn);
 		return (error);
 	}
 
-	if (pn->pn_tkey.ptk_key == NULL) {
-		PEFSDEBUG("pefs_node_get: creating node without key: %p: %p->%p\n", pn, vp, lvp);
-	}
+	if (pn->pn_tkey.ptk_key == NULL)
+		PEFSDEBUG("pefs_node_get: creating node without key: %p\n", pn);
 
 	pn->pn_vnode = vp;
 	vp->v_type = lvp->v_type;
@@ -457,7 +453,7 @@ pefs_node_get_lookupkey(struct mount *mp, struct vnode *lvp, struct vnode **vpp,
 	return (pefs_node_get(mp, lvp, vpp, pefs_node_init_lookupkey, cred));
 }
 
-static inline void
+static __inline void
 pefs_node_free(struct pefs_node *pn)
 {
 	struct vnode *lowervp;
@@ -561,8 +557,8 @@ pefs_chunk_create(struct pefs_chunk *pc, struct pefs_node *pn, size_t size)
 	void **nodebuf_ptr;
 
 	if (size > DFLTPHYS)
-		panic("pefs_chunk_create: requested buffer is too large %jd",
-		    (intmax_t)size);
+		panic("pefs_chunk_create: requested buffer is too large %zd",
+		    size);
 
 	nodebuf = 0;
 	wantbufsize = (size <= PEFS_SECTOR_SIZE ? PEFS_SECTOR_SIZE : DFLTPHYS);
@@ -579,15 +575,13 @@ pefs_chunk_create(struct pefs_chunk *pc, struct pefs_node *pn, size_t size)
 			wantbufsize = DFLTPHYS;
 			pn->pn_flags |= nodebuf;
 			nodebuf_ptr = &pn->pn_buf_large;
-		} else {
+		} else
 			nodebuf = 0;
-		}
 		VI_UNLOCK(pn->pn_vnode);
 	}
 	if (nodebuf != 0) {
-		if (*nodebuf_ptr == NULL) {
+		if (*nodebuf_ptr == NULL)
 			*nodebuf_ptr = malloc(wantbufsize, M_PEFSBUF, M_WAITOK);
-		}
 		pc->pc_nodebuf = nodebuf;
 		pc->pc_base = *nodebuf_ptr;
 	} else {
@@ -617,9 +611,8 @@ pefs_chunk_free(struct pefs_chunk* pc, struct pefs_node *pn)
 		VI_LOCK(pn->pn_vnode);
 		pn->pn_flags &= ~(pc->pc_nodebuf);
 		VI_UNLOCK(pn->pn_vnode);
-	} else {
+	} else
 		free(pc->pc_base, M_PEFSBUF);
-	}
 	pc->pc_nodebuf = 0;
 	pc->pc_base = NULL;
 }

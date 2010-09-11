@@ -28,24 +28,24 @@
 
 struct pefs_ctx;
 
-typedef void algop_keysetup_t(struct pefs_ctx *ctx, const uint8_t *key,
-    uint32_t keybits);
-typedef void algop_crypt_t(const struct pefs_ctx *ctx, const uint8_t *in,
-    uint8_t *out);
+typedef void	algop_keysetup_t(struct pefs_ctx *ctx, const uint8_t *key,
+	    uint32_t keybits);
+typedef void	algop_crypt_t(const struct pefs_ctx *ctx, const uint8_t *in,
+	    uint8_t *out);
 
 struct pefs_alg {
-	int pa_id;
-	algop_keysetup_t *pa_keysetup;
-	algop_crypt_t *pa_encrypt;
-	algop_crypt_t *pa_decrypt;
+	int			pa_id;
+	algop_keysetup_t	*pa_keysetup;
+	algop_crypt_t		*pa_encrypt;
+	algop_crypt_t		*pa_decrypt;
 };
 
-void pefs_xts_block_encrypt(const struct pefs_alg *alg,
-    const struct pefs_ctx *tweak_ctx, const struct pefs_ctx *data_ctx,
-    uint64_t sector, const uint8_t *xtweak, int len,
-    const uint8_t *src, uint8_t *dst);
+void	pefs_xts_block_encrypt(const struct pefs_alg *alg,
+	    const struct pefs_ctx *tweak_ctx, const struct pefs_ctx *data_ctx,
+	    uint64_t sector, const uint8_t *xtweak, int len,
+	    const uint8_t *src, uint8_t *dst);
 
-void pefs_xts_block_decrypt(const struct pefs_alg *alg,
-    const struct pefs_ctx *tweak_ctx, const struct pefs_ctx *data_ctx,
-    uint64_t sector, const uint8_t *xtweak, int len,
-    const uint8_t *src, uint8_t *dst);
+void	pefs_xts_block_decrypt(const struct pefs_alg *alg,
+	    const struct pefs_ctx *tweak_ctx, const struct pefs_ctx *data_ctx,
+	    uint64_t sector, const uint8_t *xtweak, int len,
+	    const uint8_t *src, uint8_t *dst);

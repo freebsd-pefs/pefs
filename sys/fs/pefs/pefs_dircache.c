@@ -48,39 +48,39 @@ __FBSDID("$FreeBSD$");
 #include <fs/pefs/pefs.h>
 #include <fs/pefs/pefs_dircache.h>
 
-#define DIRCACHE_ASSERT(pd)	MPASS(LIST_EMPTY(&(pd)->pd_heads[0]) || \
-    LIST_EMPTY(&(pd)->pd_heads[1]))
+#define	DIRCACHE_SIZE_ENV	"vfs.pefs.dircache_size"
+#define	DIRCACHE_SIZE_MIN	512
+#define	DIRCACHE_SIZE_DEFAULT	(desiredvnodes / 8)
 
-#define DIRCACHE_SIZE_ENV	"vfs.pefs.dircache_size"
-#define DIRCACHE_SIZE_MIN	512
-#define DIRCACHE_SIZE_DEFAULT	(desiredvnodes / 8)
+#define	DIRCACHE_HEADOFF(pd)	(((pd)->pd_flags & PD_SWAPEDHEADS) ? 1 : 0)
+#define	DIRCACHE_ACTIVEHEAD(pd)	(&(pd)->pd_heads[DIRCACHE_HEADOFF(pd) ^ 0])
+#define	DIRCACHE_STALEHEAD(pd)	(&(pd)->pd_heads[DIRCACHE_HEADOFF(pd) ^ 1])
 
-#define DIRCACHE_HEADOFF(pd)	(((pd)->pd_flags & PD_SWAPEDHEADS) ? 1 : 0)
-#define DIRCACHE_ACTIVEHEAD(pd)	(&(pd)->pd_heads[DIRCACHE_HEADOFF(pd) ^ 0])
-#define DIRCACHE_STALEHEAD(pd)	(&(pd)->pd_heads[DIRCACHE_HEADOFF(pd) ^ 1])
+#define	DIRCACHE_ASSERT(pd)	MPASS(LIST_EMPTY(&(pd)->pd_heads[0]) || \
+		LIST_EMPTY(&(pd)->pd_heads[1]))
 
-static struct mtx dircache_mtx;
+static struct mtx		dircache_mtx;
 
 static struct pefs_dircache_listhead *dircache_tbl;
 static struct pefs_dircache_listhead *dircache_enctbl;
-static u_long pefs_dircache_hashmask;
+static u_long			pefs_dircache_hashmask;
 
-static uma_zone_t dircache_zone;
-static uma_zone_t dircache_entry_zone;
+static uma_zone_t		dircache_zone;
+static uma_zone_t		dircache_entry_zone;
 
-int pefs_dircache_enable = 1;
+int		pefs_dircache_enable = 1;
 SYSCTL_INT(_vfs_pefs, OID_AUTO, dircache_enable, CTLFLAG_RW,
     &pefs_dircache_enable, 0, "Enable dircache");
 
-static int dircache_size = 0;
+static int	dircache_size = 0;
 SYSCTL_INT(_vfs_pefs, OID_AUTO, dircache_size, CTLFLAG_RD,
     &dircache_size, 0, "Number of dircache hash table entries");
 
-static int dircache_entries = 0;
+static int	dircache_entries = 0;
 SYSCTL_INT(_vfs_pefs, OID_AUTO, dircache_entries, CTLFLAG_RD,
     &dircache_entries, 0, "Entries in dircache");
 
-static void dircache_entry_free(struct pefs_dircache_entry *pde);
+static void	dircache_entry_free(struct pefs_dircache_entry *pde);
 
 void
 pefs_dircache_init(void)
@@ -147,7 +147,7 @@ pefs_dircache_free(struct pefs_dircache *pd)
 	uma_zfree(dircache_zone, pd);
 }
 
-static inline uint32_t
+static __inline uint32_t
 dircache_hashname(struct pefs_dircache *pd, char const *buf, size_t len)
 {
 	uint32_t h;
@@ -203,15 +203,16 @@ dircache_update(struct pefs_dircache_entry *pde, int onlist)
 		PEFSDEBUG("pefs_dircache_update: %s -> %s\n",
 		    pde->pde_name, pde->pde_encname);
 		pde->pde_gen = pd->pd_gen;
-		if (onlist)
+		if (onlist != 0)
 			LIST_REMOVE(pde, pde_dir_entry);
 		LIST_INSERT_HEAD(DIRCACHE_ACTIVEHEAD(pd), pde, pde_dir_entry);
 	} else if (pd->pd_gen == 0 || pd->pd_gen != pde->pde_gen) {
-		PEFSDEBUG("pefs_dircache: inconsistent cache: gen=%ld old_gen=%ld name=%s\n",
+		PEFSDEBUG("pefs_dircache: inconsistent cache: "
+		    "gen=%ld old_gen=%ld name=%s\n",
 		    pd->pd_gen, pde->pde_gen, pde->pde_name);
 		dircache_expire(pd);
 		pde->pde_gen = 0;
-		if (!onlist)
+		if (onlist == 0)
 			LIST_INSERT_HEAD(DIRCACHE_STALEHEAD(pd), pde,
 					pde_dir_entry);
 	}
@@ -229,10 +230,9 @@ pefs_dircache_insert(struct pefs_dircache *pd, struct pefs_tkey *ptk,
 	sx_assert(&pd->pd_lock, SA_XLOCKED);
 
 	if (name_len == 0 || name_len >= sizeof(pde->pde_name) ||
-	    encname_len == 0 || encname_len >= sizeof(pde->pde_encname)) {
-		panic("pefs: invalid file name length: %zd/%zd", name_len,
-		    encname_len);
-	}
+	    encname_len == 0 || encname_len >= sizeof(pde->pde_encname))
+		panic("pefs: invalid file name length: %zd/%zd",
+		    name_len, encname_len);
 
 	pde = uma_zalloc(dircache_entry_zone, M_WAITOK | M_ZERO);
 	pde->pde_dircache = pd;
@@ -338,7 +338,7 @@ pefs_dircache_update(struct pefs_dircache_entry *pde)
 void
 pefs_dircache_beginupdate(struct pefs_dircache *pd, u_long gen)
 {
-	if (!sx_try_upgrade(&pd->pd_lock)) {
+	if (sx_try_upgrade(&pd->pd_lock) == 0) {
 		/* vnode should be locked to avoid races */
 		sx_unlock(&pd->pd_lock);
 		sx_xlock(&pd->pd_lock);
@@ -389,4 +389,3 @@ pefs_dircache_endupdate(struct pefs_dircache *pd)
 	}
 	pd->pd_flags &= ~PD_UPDATING;
 }
-

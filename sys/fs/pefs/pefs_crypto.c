@@ -38,7 +38,6 @@ __FBSDID("$FreeBSD$");
 #include <sys/refcount.h>
 #include <sys/queue.h>
 #include <sys/vnode.h>
-
 #include <vm/uma.h>
 
 #include <crypto/camellia/camellia.h>
@@ -49,40 +48,40 @@ __FBSDID("$FreeBSD$");
 #include <fs/pefs/pefs_crypto.h>
 #include <fs/pefs/vmac.h>
 
-#define PEFS_NAME_KEY_BITS		128
+#define	PEFS_NAME_KEY_BITS	128
 
 CTASSERT(PEFS_KEY_SIZE <= SHA512_DIGEST_LENGTH);
 CTASSERT(PEFS_TWEAK_SIZE == 64/8);
 CTASSERT(PEFS_NAME_CSUM_SIZE <= sizeof(uint64_t));
 CTASSERT(MAXNAMLEN >= PEFS_NAME_PTON_SIZE(MAXNAMLEN) + PEFS_NAME_BLOCK_SIZE);
 
-static const char magic_keyinfo[] = "PEFSKEY";
-
 struct pefs_ctx {
 	union {
-		camellia_ctx pctx_camellia;
-		rijndael_ctx pctx_aes;
+		camellia_ctx	pctx_camellia;
+		rijndael_ctx	pctx_aes;
 		struct hmac_sha512_ctx pctx_hmac;
-		vmac_ctx_t pctx_vmac;
+		vmac_ctx_t	pctx_vmac;
 	} o;
 };
 
+static uma_zone_t		pefs_ctx_zone;
+static uma_zone_t		pefs_key_zone;
+
+static const char		magic_keyinfo[] = "PEFSKEY";
+
 static const struct pefs_alg pefs_alg_aes = {
-	.pa_id = PEFS_ALG_AES_XTS,
-	.pa_keysetup = (algop_keysetup_t *)rijndael_set_key,
-	.pa_encrypt = (algop_crypt_t *)rijndael_encrypt,
-	.pa_decrypt = (algop_crypt_t *)rijndael_decrypt,
+	.pa_id =		PEFS_ALG_AES_XTS,
+	.pa_keysetup =		(algop_keysetup_t *)rijndael_set_key,
+	.pa_encrypt =		(algop_crypt_t *)rijndael_encrypt,
+	.pa_decrypt =		(algop_crypt_t *)rijndael_decrypt,
 };
 
 static const struct pefs_alg pefs_alg_camellia = {
-	.pa_id = PEFS_ALG_CAMELLIA_XTS,
-	.pa_keysetup = (algop_keysetup_t *)camellia_set_key,
-	.pa_encrypt = (algop_crypt_t *)camellia_encrypt,
-	.pa_decrypt = (algop_crypt_t *)camellia_decrypt,
+	.pa_id =		PEFS_ALG_CAMELLIA_XTS,
+	.pa_keysetup =		(algop_keysetup_t *)camellia_set_key,
+	.pa_encrypt =		(algop_crypt_t *)camellia_encrypt,
+	.pa_decrypt =		(algop_crypt_t *)camellia_decrypt,
 };
-
-static uma_zone_t pefs_ctx_zone;
-static uma_zone_t pefs_key_zone;
 
 void
 pefs_crypto_init(void)
@@ -115,7 +114,7 @@ pefs_ctx_free(struct pefs_ctx *ctx)
 	uma_zfree(pefs_ctx_zone, ctx);
 }
 
-static inline void
+static __inline void
 pefs_ctx_cpy(struct pefs_ctx *dst, struct pefs_ctx *src)
 {
 	*dst = *src;
@@ -256,9 +255,8 @@ pefs_key_lookup(struct pefs_mount *pm, char *keyid)
 
 	mtx_assert(&pm->pm_keys_lock, MA_OWNED);
 	TAILQ_FOREACH(pk, &pm->pm_keys, pk_entry) {
-		if (memcmp(pk->pk_keyid, keyid, PEFS_KEYID_SIZE) == 0) {
+		if (memcmp(pk->pk_keyid, keyid, PEFS_KEYID_SIZE) == 0)
 			return (pk);
-		}
 	}
 
 	return (NULL);
@@ -284,9 +282,8 @@ pefs_key_add(struct pefs_mount *pm, int index, struct pefs_key *pk)
 			mtx_unlock(&pm->pm_keys_lock);
 			return (EEXIST);
 		}
-		if (index == pos + 1) {
+		if (index == pos + 1)
 			pk_pos = i;
-		}
 	}
 	pk->pk_entry_lock = &pm->pm_keys_lock;
 	if (TAILQ_EMPTY(&pm->pm_keys)) {
@@ -393,7 +390,7 @@ pefs_data_decrypt(struct pefs_tkey *ptk, off_t offset, struct pefs_chunk *pc)
  * File name layout: [checksum] [tweak] [name]
  * File name is padded with zeros to 16 byte boundary
  */
-static inline size_t
+static __inline size_t
 pefs_name_padsize(size_t size)
 {
 	size_t psize;
@@ -405,7 +402,7 @@ pefs_name_padsize(size_t size)
 	return (psize);
 }
 
-static inline size_t
+static __inline size_t
 pefs_name_pad(char *name, size_t size, size_t maxsize)
 {
 	size_t psize;
@@ -422,7 +419,7 @@ pefs_name_pad(char *name, size_t size, size_t maxsize)
 	return (psize);
 }
 
-static inline void
+static __inline void
 pefs_name_checksum(struct pefs_ctx *ctx, struct pefs_key *pk, char *csum,
     char *name, size_t size)
 {
@@ -458,7 +455,7 @@ pefs_name_checksum(struct pefs_ctx *ctx, struct pefs_key *pk, char *csum,
 	memcpy(csum, &csum_int, PEFS_NAME_CSUM_SIZE);
 }
 
-static inline void
+static __inline void
 pefs_name_enccbc(struct pefs_ctx *ctx, struct pefs_key *pk,
     u_char *data, ssize_t size)
 {
@@ -484,7 +481,7 @@ pefs_name_enccbc(struct pefs_ctx *ctx, struct pefs_key *pk,
 	}
 }
 
-static inline void
+static __inline void
 pefs_name_deccbc(struct pefs_ctx *ctx, struct pefs_key *pk,
     u_char *data, ssize_t size)
 {
@@ -528,8 +525,8 @@ pefs_name_encrypt(struct pefs_ctx *ctx, struct pefs_tkey *ptk,
 		return (-ENAMETOOLONG);
 	}
 	if (enc_size < r) {
-		printf("pefs: name encryption buffer is too small: length %jd, required %d\n",
-		    (intmax_t)enc_size, r);
+		printf("pefs: name encryption buffer is too small: "
+		    "length %zd, required %d\n", enc_size, r);
 		return (-EOVERFLOW);
 	}
 
@@ -545,7 +542,7 @@ pefs_name_encrypt(struct pefs_ctx *ctx, struct pefs_tkey *ptk,
 	pefs_name_enccbc(ctx, ptk->ptk_key, buf, size);
 	pefs_name_checksum(ctx, ptk->ptk_key, buf, buf, size);
 
-	if (free_ctx)
+	if (free_ctx != 0)
 		pefs_ctx_free(ctx);
 
 	enc[0] = '.';
@@ -567,7 +564,8 @@ pefs_name_decrypt(struct pefs_ctx *ctx, struct pefs_key *pk,
 	int free_ctx = 0;
 	int r, ki_rev;
 
-	KASSERT(enc != plain, ("pefs_name_decrypt: ciphertext and plaintext buffers should differ"));
+	KASSERT(enc != plain, ("pefs_name_decrypt: "
+	    "ciphertext and plaintext buffers should differ"));
 	MPASS(enc_len > 0 && enc_len <= MAXNAMLEN);
 
 	if (enc[0] != '.' || enc_len <= 1)
@@ -580,8 +578,8 @@ pefs_name_decrypt(struct pefs_ctx *ctx, struct pefs_key *pk,
 	    (r - PEFS_NAME_CSUM_SIZE) % PEFS_NAME_BLOCK_SIZE != 0)
 		return (-EINVAL);
 	if (plain_size < r) {
-		printf("pefs: name decryption buffer is too small: length %jd, required %d\n",
-		    (intmax_t)plain_size, r);
+		printf("pefs: name decryption buffer is too small: "
+		    "length %zd, required %d\n", plain_size, r);
 		return (-EOVERFLOW);
 	}
 
@@ -603,19 +601,18 @@ pefs_name_decrypt(struct pefs_ctx *ctx, struct pefs_key *pk,
 		if (memcmp(csum, plain, PEFS_NAME_CSUM_SIZE) == 0)
 			break;
 
-		if (!ki_rev) {
+		if (ki_rev == 0) {
 			ki = TAILQ_NEXT(ki, pk_entry);
 			if (ki == NULL) {
 				ki_rev = 1;
 				ki = pk;
 			}
 		}
-		if (ki_rev) {
+		if (ki_rev != 0)
 			ki = TAILQ_PREV(ki, pefs_key_head, pk_entry);
-		}
 	} while (ki != NULL);
 
-	if (free_ctx)
+	if (free_ctx != 0)
 		pefs_ctx_free(ctx);
 
 	if (ki == NULL)
@@ -623,7 +620,7 @@ pefs_name_decrypt(struct pefs_ctx *ctx, struct pefs_key *pk,
 
 	pefs_name_deccbc(ctx, ki, plain, r);
 
-	if (ptk) {
+	if (ptk != NULL) {
 		ptk->ptk_key = ki;
 		memcpy(ptk->ptk_tweak, plain + PEFS_NAME_CSUM_SIZE,
 		    PEFS_TWEAK_SIZE);

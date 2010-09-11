@@ -56,7 +56,6 @@ __FBSDID("$FreeBSD$");
 #include <sys/proc.h>
 #include <sys/sched.h>
 #include <sys/unistd.h>
-
 #include <vm/vm.h>
 #include <vm/vm_extern.h>
 #include <vm/vm_object.h>
@@ -67,23 +66,23 @@ __FBSDID("$FreeBSD$");
 #include <fs/pefs/pefs.h>
 #include <fs/pefs/pefs_dircache.h>
 
-#define DIRENT_MINSIZE (sizeof(struct dirent) - (MAXNAMLEN + 1))
-#define DIRENT_MAXSIZE (sizeof(struct dirent))
+#define	DIRENT_MINSIZE		(sizeof(struct dirent) - (MAXNAMLEN + 1))
+#define	DIRENT_MAXSIZE		(sizeof(struct dirent))
 
 CTASSERT(PEFS_SECTOR_SIZE == PAGE_SIZE);
 
 struct pefs_enccn {
-	struct componentname pec_cn;
-	void *pec_buf;
-	struct pefs_tkey pec_tkey;
+	struct componentname	pec_cn;
+	void			*pec_buf;
+	struct pefs_tkey	pec_tkey;
 };
 
-static int pefs_read_int(struct vnode *vp, struct uio *uio, int ioflag,
-    struct ucred *cred, u_quad_t fsize);
-static int pefs_write_int(struct vnode *vp, struct uio *uio, int ioflag,
-    struct ucred *cred, u_quad_t nsize);
+static int	pefs_read_int(struct vnode *vp, struct uio *uio, int ioflag,
+		    struct ucred *cred, u_quad_t fsize);
+static int	pefs_write_int(struct vnode *vp, struct uio *uio, int ioflag,
+		    struct ucred *cred, u_quad_t nsize);
 
-static inline u_long
+static __inline u_long
 pefs_getgen(struct vnode *vp, struct ucred *cred)
 {
 	struct vattr va;
@@ -96,7 +95,7 @@ pefs_getgen(struct vnode *vp, struct ucred *cred)
 	return (va.va_gen);
 }
 
-static inline int
+static __inline int
 pefs_tkey_cmp(struct pefs_tkey *a, struct pefs_tkey *b)
 {
 	int r;
@@ -108,7 +107,7 @@ pefs_tkey_cmp(struct pefs_tkey *a, struct pefs_tkey *b)
 	return (r);
 }
 
-static inline int
+static __inline int
 pefs_cache_active(struct vnode *vp)
 {
 	struct pefs_mount *pm = VFS_TO_PEFS(vp->v_mount);
@@ -127,9 +126,9 @@ pefs_cache_dirent(struct pefs_dircache *pd, struct dirent *de,
 	int name_len;
 
 	cache = pefs_dircache_enclookup(pd, de->d_name, de->d_namlen);
-	if (cache != NULL) {
+	if (cache != NULL)
 		pefs_dircache_update(cache);
-	} else {
+	else {
 		name_len = pefs_name_decrypt(ctx, pk, &ptk,
 		    de->d_name, de->d_namlen, buf, sizeof(buf));
 		if (name_len <= 0)
@@ -141,7 +140,7 @@ pefs_cache_dirent(struct pefs_dircache *pd, struct dirent *de,
 	return (cache);
 }
 
-static inline int
+static __inline int
 pefs_name_skip(char *name, int namelen)
 {
 	if (name[0] == '.' &&
@@ -150,14 +149,14 @@ pefs_name_skip(char *name, int namelen)
 	return (0);
 }
 
-static inline void
+static __inline void
 pefs_enccn_init(struct pefs_enccn *pec)
 {
 	pec->pec_buf = NULL;
 	pec->pec_cn.cn_flags = 0;
 }
 
-static inline void
+static __inline void
 pefs_enccn_alloc(struct pefs_enccn *pec, struct componentname *cnp)
 {
 	KASSERT(pec->pec_buf == NULL, ("pefs_enccn_alloc: buffer reuse\n"));
@@ -170,7 +169,7 @@ pefs_enccn_alloc(struct pefs_enccn *pec, struct componentname *cnp)
 	pec->pec_cn.cn_namelen = 0;
 }
 
-static inline void
+static __inline void
 pefs_enccn_free(struct pefs_enccn *pec)
 {
 	if (pec->pec_buf != NULL) {
@@ -194,14 +193,14 @@ pefs_enccn_set(struct pefs_enccn *pec, struct pefs_tkey *ptk, char *encname,
 	MPASS(pec != NULL && cnp != NULL);
 
 	if (encname_len >= MAXPATHLEN)
-		panic("pefs_enccn_set: invalid encrypted name length: %d", encname_len);
+		panic("pefs_enccn_set: invalid encrypted name length: %d",
+		    encname_len);
 
 	pefs_enccn_alloc(pec, cnp);
-	if (ptk != NULL && ptk->ptk_key != NULL) {
+	if (ptk != NULL && ptk->ptk_key != NULL)
 		pec->pec_tkey = *ptk;
-	} else {
+	else
 		pec->pec_tkey.ptk_key = NULL;
-	}
 	memcpy(pec->pec_buf, encname, encname_len);
 	((char *) pec->pec_buf)[encname_len] = '\0';
 	pec->pec_cn.cn_namelen = encname_len;
@@ -395,7 +394,7 @@ pefs_enccn_get(struct pefs_enccn *pec, struct vnode *dvp, struct vnode *vp,
 }
 
 #ifdef PEFS_DEBUG_EXTRA
-static inline void
+static void
 __pefs_enccn_assert_noent(struct vnode *dvp, struct componentname *cnp,
     const char *file, int line)
 {
@@ -406,19 +405,20 @@ __pefs_enccn_assert_noent(struct vnode *dvp, struct componentname *cnp,
 	error = pefs_enccn_lookup(&enccn, dvp, cnp);
 
 	if (error != ENOENT)
-		panic("pefs_enccn assertion failed: %s:%d: unexpected error %d: %*s\n",
+		panic("pefs_enccn assertion failed: %s:%d: "
+		    "unexpected error %d: %*s\n",
 		    file, line, error, (int)cnp->cn_namelen, cnp->cn_nameptr);
 	pefs_enccn_free(&enccn);
 }
 
-#define PEFS_ENCCN_ASSERT_NOENT(dvp, cnp) \
-	__pefs_enccn_assert_noent((dvp), (cnp), __FILE__, __LINE__);
-#else /* PEFS_DEBUG_EXTRA */
-#define PEFS_ENCCN_ASSERT_NOENT(dvp, cnp) \
-	do { } while(0)
-#endif
+#define	PEFS_ENCCN_ASSERT_NOENT(dvp, cnp)	\
+		__pefs_enccn_assert_noent((dvp), (cnp), __FILE__, __LINE__);
+#else
+#define	PEFS_ENCCN_ASSERT_NOENT(dvp, cnp)	\
+		do { } while(0)
+#endif /* PEFS_DEBUG_EXTRA */
 
-#define PEFS_FLUSHKEY_ALL		1
+#define	PEFS_FLUSHKEY_ALL		1
 
 /*
  * Recycle vnodes with key pk.
@@ -461,9 +461,8 @@ loop:
 			VOP_UNLOCK(vp, 0);
 			vdrop(vp);
 			MNT_ILOCK(mp);
-		} else {
+		} else
 			VI_UNLOCK(vp);
-		}
 	}
 	MNT_IUNLOCK(mp);
 
@@ -529,28 +528,24 @@ pefs_lookup(struct vop_cachedlookup_args *ap)
 
 		if (error == 0) {
 			error = VOP_LOOKUP(ldvp, &lvp, &enccn.pec_cn);
-			if (error == 0 || error == EJUSTRETURN) {
+			if (error == 0 || error == EJUSTRETURN)
 				cnp->cn_flags = (cnp->cn_flags & HASBUF) |
 				    (enccn.pec_cn.cn_flags & ~HASBUF);
-			}
 			if (error != 0)
 				PEFSDEBUG("pefs_lookup: lower error = %d\n",
 				    error);
-		} else {
+		} else
 			PEFSDEBUG("pefs_lookup: pefs_enccn_lookup error = %d\n",
 			    error);
-		}
 	}
 
 	if ((error == 0 || error == EJUSTRETURN) && (flags & ISLASTCN) &&
 	    cnp->cn_nameiop != LOOKUP)
 		cnp->cn_flags |= SAVENAME;
 	if (error == ENOENT && (cnp->cn_flags & MAKEENTRY) &&
-	    cnp->cn_nameiop != CREATE) {
-		PEFSDEBUG("pefs_lookup: cache_enter negative %.*s\n",
-		    (int)cnp->cn_namelen, cnp->cn_nameptr);
+	    cnp->cn_nameiop != CREATE)
 		cache_enter(dvp, NULLVP, cnp);
-	} else if ((error == 0 || error == EJUSTRETURN) && lvp != NULL) {
+	else if ((error == 0 || error == EJUSTRETURN) && lvp != NULL) {
 		if (ldvp == lvp) {
 			*ap->a_vpp = dvp;
 			VREF(dvp);
@@ -567,16 +562,12 @@ pefs_lookup(struct vop_cachedlookup_args *ap)
 			} else {
 				*ap->a_vpp = vp;
 				if ((cnp->cn_flags & MAKEENTRY) &&
-				    cnp->cn_nameiop != CREATE) {
-					PEFSDEBUG("pefs_lookup: cache_enter %.*s\n",
-					    (int)cnp->cn_namelen,cnp->cn_nameptr);
+				    cnp->cn_nameiop != CREATE)
 					cache_enter(dvp, vp, cnp);
-				}
 			}
 		}
-	} else {
+	} else
 		*ap->a_vpp = NULL;
-	}
 
 	if (!nokey_lookup)
 		pefs_enccn_free(&enccn);
@@ -778,9 +769,8 @@ pefs_getattr(struct vop_getattr_args *ap)
 		return (error);
 
 	vap->va_fsid = vp->v_mount->mnt_stat.f_fsid.val[0];
-	if (vap->va_type == VLNK) {
+	if (vap->va_type == VLNK)
 		vap->va_size = PEFS_NAME_PTON_SIZE(vap->va_size);
-	}
 	return (0);
 }
 
@@ -947,9 +937,9 @@ pefs_rename(struct vop_rename_args *ap)
 	if ((fcnp->cn_namelen == 1 && fcnp->cn_nameptr[0] == '.') ||
 	    (fcnp->cn_flags & ISDOTDOT) || (tcnp->cn_flags & ISDOTDOT) ||
 	    fdvp == fvp) {
-			error = EINVAL;
-			goto out_locked;
-		}
+		error = EINVAL;
+		goto out_locked;
+	}
 
 	if (pefs_no_keys(tdvp)) {
 		error = EROFS;
@@ -1154,7 +1144,8 @@ pefs_lock(struct vop_lock1_args *ap)
 				ap->a_flags |= LK_EXCLUSIVE;
 				break;
 			default:
-				panic("pefs_lock: unsupported lock request %d\n",
+				panic("pefs_lock: "
+				    "unsupported lock request %d\n",
 				    ap->a_flags);
 			}
 			VOP_UNLOCK(lvp, 0);
@@ -1233,7 +1224,8 @@ pefs_inactive(struct vop_inactive_args *ap)
 
 	if ((pn->pn_flags & PN_HASKEY) && vp->v_object != NULL) {
 		if (vp->v_object->resident_page_count > 0)
-			PEFSDEBUG("pefs_inactive: vobject has dirty pages: vp=%p count=%d\n",
+			PEFSDEBUG("pefs_inactive: vobject has dirty pages: "
+			    "vp=%p count=%d\n",
 			    vp, vp->v_object->resident_page_count);
 		VM_OBJECT_LOCK(vp->v_object);
 		vm_object_page_clean(vp->v_object, 0, 0, OBJPC_SYNC);
@@ -1301,18 +1293,16 @@ pefs_print(struct vop_print_args *ap)
 	return (0);
 }
 
-/* ARGSUSED */
 static int
 pefs_getwritemount(struct vop_getwritemount_args *ap)
 {
-	struct pefs_node *pn;
+	struct vnode *vp = ap->a_vp;
 	struct vnode *lowervp;
-	struct vnode *vp;
+	struct pefs_node *pn;
 
-	vp = ap->a_vp;
 	VI_LOCK(vp);
 	pn = VP_TO_PN(vp);
-	if (pn && (lowervp = pn->pn_lowervp)) {
+	if (pn != NULL && (lowervp = pn->pn_lowervp) != NULL) {
 		VI_LOCK_FLAGS(lowervp, MTX_DUPOK);
 		VI_UNLOCK(vp);
 		vholdl(lowervp);
@@ -1329,9 +1319,8 @@ pefs_getwritemount(struct vop_getwritemount_args *ap)
 static int
 pefs_vptofh(struct vop_vptofh_args *ap)
 {
-	struct vnode *lvp;
+	struct vnode *lvp = PEFS_LOWERVP(ap->a_vp);
 
-	lvp = PEFS_LOWERVP(ap->a_vp);
 	return (VOP_VPTOFH(lvp, ap->a_fhp));
 }
 
@@ -1425,7 +1414,7 @@ pefs_readdir(struct vop_readdir_args *ap)
 			break;
 		pefs_chunk_setsize(&pc, pc.pc_size - puio->uio_resid);
 		mem_size = pc.pc_size;
-		if (!*eofflag)
+		if (*eofflag == 0)
 			pefs_dircache_abortupdate(pn->pn_dircache);
 		pefs_readdir_decrypt(pn->pn_dircache, ctx, pn_key, pn->pn_flags,
 		    pc.pc_base, &mem_size);
@@ -1436,7 +1425,7 @@ pefs_readdir(struct vop_readdir_args *ap)
 		uio->uio_offset = puio->uio_offset;
 
 		/* Finish if there is no need to merge cookies */
-		if ((*eofflag || uio->uio_resid < DIRENT_MAXSIZE) &&
+		if ((*eofflag != 0 || uio->uio_resid < DIRENT_MAXSIZE) &&
 		    (a_cookies == NULL || r_cookies == NULL))
 			break;
 
@@ -1463,12 +1452,12 @@ pefs_readdir(struct vop_readdir_args *ap)
 			cookies = NULL;
 		}
 
-		if (*eofflag || uio->uio_resid < DIRENT_MAXSIZE)
+		if (*eofflag != 0 || uio->uio_resid < DIRENT_MAXSIZE)
 			break;
 
 		pefs_chunk_restore(&pc);
 	}
-	if (*eofflag && error == 0)
+	if (*eofflag != 0 && error == 0)
 		pefs_dircache_endupdate(pn->pn_dircache);
 	else
 		pefs_dircache_abortupdate(pn->pn_dircache);
@@ -1506,9 +1495,8 @@ pefs_mkdir(struct vop_mkdir_args *ap)
 	pefs_enccn_init(&enccn);
 	PEFS_ENCCN_ASSERT_NOENT(dvp, cnp);
 	error = pefs_enccn_create_node(&enccn, dvp, cnp);
-	if (error != 0) {
+	if (error != 0)
 		return (error);
-	}
 
 	error = VOP_MKDIR(PEFS_LOWERVP(dvp), &lvp, &enccn.pec_cn, ap->a_vap);
 	if (error == 0 && lvp != NULL) {
@@ -1537,10 +1525,8 @@ pefs_rmdir(struct vop_rmdir_args *ap)
 		return (EROFS);
 	pefs_enccn_init(&enccn);
 	error = pefs_enccn_get(&enccn, dvp, vp, cnp);
-	if (error != 0) {
-		PEFSDEBUG("pefs_rmdir: pefs_enccn_get failed: %d\n", error);
+	if (error != 0)
 		return (error);
-	}
 
 	error = VOP_RMDIR(PEFS_LOWERVP(dvp), PEFS_LOWERVP(vp), &enccn.pec_cn);
 	VP_TO_PN(vp)->pn_flags |= PN_WANTRECYCLE;
@@ -1570,9 +1556,8 @@ pefs_create(struct vop_create_args *ap)
 	pefs_enccn_init(&enccn);
 	PEFS_ENCCN_ASSERT_NOENT(dvp, cnp);
 	error = pefs_enccn_create_node(&enccn, dvp, cnp);
-	if (error != 0) {
+	if (error != 0)
 		return (error);
-	}
 
 	error = VOP_CREATE(PEFS_LOWERVP(dvp), &lvp, &enccn.pec_cn, ap->a_vap);
 	if (error == 0 && lvp != NULL) {
@@ -1601,18 +1586,16 @@ pefs_remove(struct vop_remove_args *ap)
 		return (EROFS);
 	pefs_enccn_init(&enccn);
 	error = pefs_enccn_get(&enccn, dvp, vp, cnp);
-	if (error != 0) {
+	if (error != 0)
 		return (error);
-	}
 
 	error = VOP_REMOVE(PEFS_LOWERVP(dvp), PEFS_LOWERVP(vp), &enccn.pec_cn);
 	VP_TO_PN(vp)->pn_flags |= PN_WANTRECYCLE;
 
 	pefs_enccn_free(&enccn);
 
-	if (error == 0) {
+	if (error == 0)
 		cache_purge(vp);
-	}
 
 	return (error);
 }
@@ -1636,9 +1619,8 @@ pefs_link(struct vop_link_args *ap)
 	PEFS_ENCCN_ASSERT_NOENT(ap->a_tdvp, cnp);
 	error = pefs_enccn_create(&enccn, pn->pn_tkey.ptk_key,
 	    pn->pn_tkey.ptk_tweak, cnp);
-	if (error != 0) {
+	if (error != 0)
 		return (error);
-	}
 
 	error = VOP_LINK(PEFS_LOWERVP(dvp), PEFS_LOWERVP(vp), &enccn.pec_cn);
 
@@ -1669,9 +1651,8 @@ pefs_symlink(struct vop_symlink_args *ap)
 
 	target_len = strlen(ap->a_target);
 	penc_target_len = PEFS_NAME_NTOP_SIZE(target_len) + 1;
-	if (penc_target_len > MAXPATHLEN) {
+	if (penc_target_len > MAXPATHLEN)
 		return (ENAMETOOLONG);
-	}
 
 	pefs_enccn_init(&enccn);
 	PEFS_ENCCN_ASSERT_NOENT(dvp, cnp);
@@ -1726,13 +1707,12 @@ pefs_readlink(struct vop_readlink_args *ap)
 		target_len = pc.pc_size - puio->uio_resid;
 		target_len = pefs_name_pton(pc.pc_base, target_len, pc.pc_base,
 		    target_len);
-		if (target_len < 0) {
-			error = EIO;
-		} else {
+		if (target_len >= 0) {
 			pefs_chunk_setsize(&pc, target_len);
 			pefs_data_decrypt(&pn->pn_tkey, 0, &pc);
 			uiomove(pc.pc_base, target_len, uio);
-		}
+		} else
+			error = EIO;
 	}
 	pefs_chunk_free(&pc, pn);
 
@@ -1753,9 +1733,8 @@ pefs_mknod(struct vop_mknod_args *ap)
 	pefs_enccn_init(&enccn);
 	PEFS_ENCCN_ASSERT_NOENT(dvp, cnp);
 	error = pefs_enccn_create_node(&enccn, dvp, cnp);
-	if (error != 0) {
+	if (error != 0)
 		return (error);
-	}
 
 	error = VOP_MKNOD(PEFS_LOWERVP(dvp), &lvp, &enccn.pec_cn, ap->a_vap);
 	if (error == 0 && lvp != NULL) {
@@ -1769,7 +1748,7 @@ pefs_mknod(struct vop_mknod_args *ap)
 	return (error);
 }
 
-static inline int
+static __inline int
 pefs_getsize(struct vnode *vp, u_quad_t *sizep, struct ucred *cred)
 {
 	struct vattr va;
@@ -1782,7 +1761,7 @@ pefs_getsize(struct vnode *vp, u_quad_t *sizep, struct ucred *cred)
 	return (error);
 }
 
-static inline int
+static __inline int
 pefs_ismapped(struct vnode *vp)
 {
 	vm_object_t object = vp->v_object;
@@ -1818,7 +1797,8 @@ lookupvpg:
 			goto lookupvpg;
 		vm_page_busy(m);
 		VM_OBJECT_UNLOCK(vp->v_object);
-		PEFSDEBUG("pefs_read: mapped: offset=0x%jx moffset=0x%jx msize=0x%jx\n",
+		PEFSDEBUG("pefs_read: mapped: "
+		    "offset=0x%jx moffset=0x%jx msize=0x%jx\n",
 		    uio->uio_offset, (intmax_t)moffset, (intmax_t)msize);
 		error = uiomove_fromphys(&m, moffset, msize, uio);
 		VM_OBJECT_LOCK(vp->v_object);
@@ -1840,7 +1820,7 @@ lookupvpg:
 	return (0);
 }
 
-static inline ssize_t
+static __inline ssize_t
 pefs_bufsize(struct uio *uio, ssize_t maxsize)
 {
 	return (qmin(roundup2(uio->uio_resid, PEFS_SECTOR_SIZE), maxsize));
@@ -1926,8 +1906,8 @@ pefs_read_int(struct vnode *vp, struct uio *uio, int ioflag, struct ucred *cred,
 		}
 		pefs_chunk_setsize(&pc, bsize);
 
-		PEFSDEBUG("pefs_read: mapped=%d m=%d offset=0x%jx size=0x%jx\n",
-		    mapped, m != NULL, uio->uio_offset, (intmax_t)bsize - bskip);
+		PEFSDEBUG("pefs_read: mapped=%d m=%d offset=0x%jx size=0x%zx\n",
+		    mapped, m != NULL, uio->uio_offset, bsize - bskip);
 		puio = pefs_chunk_uio(&pc, poffset, uio->uio_rw);
 		error = VOP_READ(lvp, puio, ioflag, cred);
 		if (error != 0)
@@ -1997,8 +1977,9 @@ lookupvpg:
 		vm_page_undirty(m);
 		vm_page_unlock_queues();
 		VM_OBJECT_UNLOCK(vp->v_object);
-		PEFSDEBUG("pefs_write: mapped: offset=0x%jx moffset=0x%jx bsize=0x%jx\n",
-		    uio->uio_offset, (intmax_t)moffset, (intmax_t)bsize);
+		PEFSDEBUG("pefs_write: mapped: "
+		    "offset=0x%jx moffset=0x%jx bsize=0x%zx\n",
+		    uio->uio_offset, (intmax_t)moffset, bsize);
 		sched_pin();
 		sf = sf_buf_alloc(m, SFB_CPUPRIVATE);
 		ma = (char *)sf_buf_kva(sf);
@@ -2309,7 +2290,8 @@ pefs_ioctl(struct vop_ioctl_args *ap)
 		error = priv_check_cred(cred, PRIV_VFS_ADMIN, 0);
 		if (error != 0 && (mp->mnt_flag & MNT_RDONLY) == 0) {
 			vn_lock(pm->pm_rootvp, LK_SHARED | LK_RETRY);
-			error = VOP_ACCESS(mp->mnt_vnodecovered, VWRITE, cred, td);
+			error = VOP_ACCESS(mp->mnt_vnodecovered, VWRITE,
+			    cred, td);
 			VOP_UNLOCK(pm->pm_rootvp, 0);
 		}
 		if (error != 0)
@@ -2401,9 +2383,8 @@ pefs_ioctl(struct vop_ioctl_args *ap)
 		break;
 	case PEFS_FLUSHKEYS:
 		PEFSDEBUG("pefs_ioctl: flush keys\n");
-		if (pefs_key_remove_all(pm)) {
+		if (pefs_key_remove_all(pm))
 			pefs_flushkey(mp, td, PEFS_FLUSHKEY_ALL, NULL);
-		}
 		break;
 	default:
 		error = ENOTTY;

@@ -51,7 +51,7 @@ __FBSDID("$FreeBSD$");
 
 #include <fs/pefs/pefs.h>
 
-#define Assert(Cond) (void)0
+#define	Assert(Cond)		(void)0
 
 /*
  * Algorithm is basicly standard base64 with few exceptions:
