@@ -949,26 +949,6 @@ pefs_rename(struct vop_rename_args *ap)
 	if (error != 0) {
 		goto bad;
 	}
-#ifdef PEFS_DEBUG_EXTRA
-	if (tvp == NULL) {
-		tcnp->cn_nameiop = DELETE;
-		error = VOP_LOOKUP(tdvp, &tvp, tcnp);
-		tcnp->cn_nameiop = RENAME;
-		MPASS(error != 0);
-		if (error == ENOENT) {
-			error = 0;
-		} else {
-			PEFSDEBUG("pefs_rename: lookup target vnode: %s: error=%d, tvp=%p\n",
-			    tcnp->cn_nameptr, error, tvp);
-			if (error == 0)
-				vput(tvp);
-			tvp = NULL;
-			error = EINVAL;
-			pefs_enccn_free(&fenccn);
-			goto bad;
-		}
-	}
-#endif
 	if (tvp != NULL) {
 		if (fvp->v_type == VDIR && tvp->v_type != VDIR)
 			error = ENOTDIR;
