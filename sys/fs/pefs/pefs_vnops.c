@@ -879,6 +879,62 @@ pefs_close(struct vop_close_args *ap)
 }
 
 static int
+pefs_isemptydir_parsedir(void *mem, size_t sz)
+{
+	struct dirent *de;
+
+	for (de = (struct dirent*) mem; sz > DIRENT_MINSIZE;
+			sz -= de->d_reclen,
+			de = (struct dirent *)(((caddr_t)de) + de->d_reclen)) {
+		MPASS(de->d_reclen <= sz);
+		if (de->d_reclen == 0)
+			break;
+		if (de->d_type == DT_WHT || de->d_fileno == 0)
+			continue;
+		if (de->d_name[0] == '.' && (de->d_namlen == 1 ||
+		    (de->d_namlen == 2 && de->d_name[1] == '.')))
+			continue;
+		return (ENOTEMPTY);
+	}
+	return (0);
+}
+
+static int
+pefs_isemptydir(struct vnode *dvp, struct ucred *cred)
+{
+	struct vnode *ldvp = PEFS_LOWERVP(dvp);
+	struct uio *uio;
+	struct pefs_node *dpn = VP_TO_PN(dvp);
+	struct pefs_chunk pc;
+	off_t offset;
+	int eofflag, error;
+
+	MPASS(dvp->v_type == VDIR);
+
+	offset = 0;
+	eofflag = 0;
+	error = 0;
+	ldvp = PEFS_LOWERVP(dvp);
+	pefs_chunk_create(&pc, dpn, PEFS_SECTOR_SIZE);
+	while (!eofflag) {
+		uio = pefs_chunk_uio(&pc, offset, UIO_READ);
+		error = VOP_READDIR(ldvp, uio, cred, &eofflag, NULL, NULL);
+		if (error != 0)
+			break;
+		offset = uio->uio_offset;
+		if (pc.pc_size == uio->uio_resid)
+			break;
+		pefs_chunk_setsize(&pc, pc.pc_size - uio->uio_resid);
+		error = pefs_isemptydir_parsedir(pc.pc_base, pc.pc_size);
+		if (error != 0)
+			break;
+		pefs_chunk_restore(&pc);
+	}
+	pefs_chunk_free(&pc, dpn);
+	return (error);
+}
+
+static int
 pefs_rename(struct vop_rename_args *ap)
 {
 	struct vnode *fdvp = ap->a_fdvp;
@@ -888,7 +944,6 @@ pefs_rename(struct vop_rename_args *ap)
 	struct vnode *tdvp = ap->a_tdvp;
 	struct vnode *ltdvp = PEFS_LOWERVP(tdvp);
 	struct vnode *tvp = ap->a_tvp;
-	struct vnode *txvp = NULL;
 	struct vnode *ltvp = (tvp == NULL ? NULL : PEFS_LOWERVP(tvp));
 	struct componentname *fcnp = ap->a_fcnp;
 	struct componentname *tcnp = ap->a_tcnp;
@@ -901,11 +956,16 @@ pefs_rename(struct vop_rename_args *ap)
 	    ("pefs_rename: no name"));
 	KASSERT(fcnp->cn_flags & (SAVENAME | SAVESTART),
 	    ("pefs_rename: no name"));
+
+	pefs_enccn_init(&fenccn);
+	pefs_enccn_init(&tenccn);
+	pefs_enccn_init(&txenccn);
+
 	/* Check for cross-device rename. */
 	if ((fvp->v_mount != tdvp->v_mount) ||
 	    (tvp && (fvp->v_mount != tvp->v_mount))) {
 		error = EXDEV;
-		goto bad;
+		goto out_locked;
 	}
 
 	/* Handle '.' and '..' rename attempt */
@@ -913,16 +973,13 @@ pefs_rename(struct vop_rename_args *ap)
 	    (fcnp->cn_flags & ISDOTDOT) || (tcnp->cn_flags & ISDOTDOT) ||
 	    fdvp == fvp) {
 			error = EINVAL;
-			goto bad;
+			goto out_locked;
 		}
 
 	if (pefs_no_keys(tdvp)) {
 		error = EROFS;
-		goto bad;
+		goto out_locked;
 	}
-
-	pefs_enccn_init(&fenccn);
-	pefs_enccn_init(&tenccn);
 
 	if ((VP_TO_PN(fvp)->pn_flags & PN_HASKEY) == 0) {
 		PEFSDEBUG("pefs_rename: source !HASKEY: %s\n",
@@ -938,116 +995,106 @@ pefs_rename(struct vop_rename_args *ap)
 				vref(ltvp);
 			error = VOP_RENAME(lfdvp, lfvp, fcnp, ltdvp, ltvp,
 			    tcnp);
-			goto done;
+			goto out_unlocked;
 		}
 		/* Target directory is encrypted. Files should be recreated. */
 		error = EXDEV;
-		goto bad;
+		goto out_locked;
 	}
 
 	error = pefs_enccn_get(&fenccn, fdvp, fvp, fcnp);
-	if (error != 0) {
-		goto bad;
-	}
+	if (error != 0)
+		goto out_locked;
+	error = pefs_enccn_create(&tenccn, fenccn.pec_tkey.ptk_key,
+	    fenccn.pec_tkey.ptk_tweak, tcnp);
+	if (error != 0)
+		goto out_locked;
+
 	if (tvp != NULL) {
-		if (fvp->v_type == VDIR && tvp->v_type != VDIR)
+		if (fvp->v_type == VDIR && tvp->v_type != VDIR) {
 			error = ENOTDIR;
-		else if (fvp->v_type != VDIR && tvp->v_type == VDIR)
+			goto out_locked;
+		} else if (fvp->v_type != VDIR && tvp->v_type == VDIR) {
 			error = EISDIR;
-		else if (fvp->v_type != VREG)
+			goto out_locked;
+		} else {
 			/*
-			 * Lower level is to check if tvp directory is empty.
-			 * After rename fvp will contain invalid key/tweak.
-			 */
-			error = pefs_enccn_get(&tenccn, tdvp, tvp, tcnp);
-		else if (fvp->v_type == VREG) {
-			/*
-			 * We end up having 2 files with same name but different
-			 * tweaks/keys. Set ltvp to zero here because we rename
+			 * We end up having 2 files with same name but
+			 * different tweaks/keys. If target is directory verify
+			 * it's empty. Set ltvp to zero here because we rename
 			 * to new name and then remove old one.
 			 */
-			pefs_enccn_init(&txenccn);
-			error = pefs_enccn_create(&tenccn,
-			    fenccn.pec_tkey.ptk_key, fenccn.pec_tkey.ptk_tweak,
-			    tcnp);
+			if (tvp->v_type == VDIR) {
+				error = pefs_isemptydir(tvp, tcnp->cn_cred);
+				if (error != 0)
+					goto out_locked;
+			}
+
+			error = pefs_enccn_get(&txenccn, tdvp, tvp, tcnp);
+			if (error != 0)
+				goto out_locked;
+
+			ltvp = NULL;
+			VP_TO_PN(tvp)->pn_flags |= PN_WANTRECYCLE;
+			cache_purge(tvp);
+			VOP_UNLOCK(tvp, 0);
+
+			error = VOP_LOOKUP(ltdvp, &ltvp, &tenccn.pec_cn);
 			if (error == 0)
-				error = pefs_enccn_get(&txenccn, tdvp, tvp,
-				    tcnp);
-			if (error == 0) {
-				txvp = tvp;
-				tvp = NULL;
-				ltvp = NULL;
-				VP_TO_PN(txvp)->pn_flags |= PN_WANTRECYCLE;
-				cache_purge(txvp);
-				VOP_UNLOCK(txvp, 0);
-				error = VOP_LOOKUP(ltdvp, &tvp, &tenccn.pec_cn);
-				if (error == 0)
-					panic("pefs_rename: dummy rename target exists");
-				MPASS(tvp == NULL);
-				error = 0;
-			} else
-				pefs_enccn_free(&txenccn);
+				panic("pefs_rename: "
+				    "dummy rename target exists");
+			error = 0;
 		}
-	} else
-		error = pefs_enccn_create(&tenccn, fenccn.pec_tkey.ptk_key,
-		    fenccn.pec_tkey.ptk_tweak, tcnp);
-	if (error != 0) {
-		pefs_enccn_free(&fenccn);
-		goto bad;
 	}
+
+	MPASS(ltvp == NULL);
+	MPASS(error == 0);
+	ASSERT_VOP_LOCKED(ltdvp, "pefs_rename");
 
 	vref(lfdvp);
 	vref(lfvp);
 	vref(ltdvp);
-	ASSERT_VOP_LOCKED(ltdvp, "pefs_rename");
-	if (ltvp != NULL) {
-		ASSERT_VOP_LOCKED(ltvp, "pefs_rename");
-		vref(ltvp);
-	}
-	error = VOP_RENAME(lfdvp, lfvp, &fenccn.pec_cn, ltdvp, ltvp,
+
+	error = VOP_RENAME(lfdvp, lfvp, &fenccn.pec_cn, ltdvp, NULL,
 	    &tenccn.pec_cn);
 
 	if (error == 0) {
-		if (txvp != NULL) {
+		if (tvp != NULL) {
 			/*
-			 * Remove old file. Double rename is not performed to
-			 * prevent data loss in case of error
+			 * Remove dummy target file.
 			 */
 			ASSERT_VOP_UNLOCKED(tdvp, "pefs_rename");
-			ASSERT_VOP_UNLOCKED(txvp, "pefs_rename");
+			ASSERT_VOP_UNLOCKED(tvp, "pefs_rename");
 			vn_lock(tdvp, LK_EXCLUSIVE | LK_RETRY);
 			txenccn.pec_cn.cn_nameiop = DELETE;
 			error = VOP_LOOKUP(ltdvp, &ltvp, &txenccn.pec_cn);
 			if (error == 0) {
-				error = VOP_REMOVE(ltdvp, ltvp,
-				    &txenccn.pec_cn);
+				if (tvp->v_type != VDIR)
+					error = VOP_REMOVE(ltdvp, ltvp,
+					    &txenccn.pec_cn);
+				else
+					error = VOP_RMDIR(ltdvp, ltvp,
+					    &txenccn.pec_cn);
 				PEFSDEBUG("pefs_rename: remove old: %s\n",
 				    txenccn.pec_cn.cn_nameptr);
 				vput(ltvp);
 			}
 			VOP_UNLOCK(tdvp, 0);
-			pefs_enccn_free(&txenccn);
 		}
 		cache_purge(fdvp);
 		cache_purge(fvp);
 	}
 
-	pefs_enccn_free(&tenccn);
-	pefs_enccn_free(&fenccn);
-
-done:
+out_unlocked:
 	ASSERT_VOP_UNLOCKED(tdvp, "pefs_rename");
 	vrele(fdvp);
 	vrele(fvp);
 	vrele(tdvp);
 	if (tvp != NULL)
 		vrele(tvp);
-	if (txvp != NULL)
-		vrele(txvp);
+	goto out;
 
-	return (error);
-
-bad:
+out_locked:
 	if (tdvp == tvp)
 		vrele(tdvp);
 	else
@@ -1056,6 +1103,11 @@ bad:
 		vput(tvp);
 	vrele(fdvp);
 	vrele(fvp);
+
+out:
+	pefs_enccn_free(&tenccn);
+	pefs_enccn_free(&txenccn);
+	pefs_enccn_free(&fenccn);
 
 	return (error);
 }
