@@ -1617,6 +1617,8 @@ pefs_link(struct vop_link_args *ap)
 	int error;
 
 	KASSERT(cnp->cn_flags & SAVENAME, ("pefs_link: no name"));
+	if (dvp->v_mount != vp->v_mount)
+		return (EXDEV);
 	if ((pn->pn_flags & PN_HASKEY) == 0 || pefs_no_keys(vp))
 		return (EROFS);
 	pefs_enccn_init(&enccn);
