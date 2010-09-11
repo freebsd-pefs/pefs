@@ -79,6 +79,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/limits.h>
 #include <sys/proc.h>
 #include <sys/sched.h>
+#include <sys/unistd.h>
 
 #include <vm/vm.h>
 #include <vm/vm_extern.h>
@@ -2389,6 +2390,37 @@ pefs_ioctl(struct vop_ioctl_args *ap)
 	return (error);
 }
 
+static int
+pefs_pathconf(struct vop_pathconf_args *ap)
+{
+	struct vnode *vp = ap->a_vp;
+	int error, v;
+
+	error = VOP_PATHCONF(PEFS_LOWERVP(vp), ap->a_name, ap->a_retval);
+	if (error != 0)
+		return (error);
+
+	switch (ap->a_name) {
+	case _PC_NAME_MAX:
+		/*
+		 * ntop(csum + roundup(tweak + name, bs) = maxname
+		 * roundup(tweak + name, bs) = pton(maxname) - csum
+		 * name = rounddown(pton(maxname) - csum, bs) - tweak
+		 */
+		v = PEFS_NAME_PTON_SIZE(*ap->a_retval);
+		v = rounddown(v - PEFS_NAME_CSUM_SIZE, PEFS_NAME_BLOCK_SIZE);
+		v = v - PEFS_TWEAK_SIZE;
+		*ap->a_retval = v;
+		break;
+	case _PC_SYMLINK_MAX:
+		v = PEFS_NAME_PTON_SIZE(*ap->a_retval - 1);
+		*ap->a_retval = v;
+		break;
+	}
+
+	return (0);
+}
+
 /*
  * Global vfs data structures
  */
@@ -2429,4 +2461,5 @@ struct vop_vector pefs_vnodeops = {
 	.vop_putpages =		vop_stdputpages,
 	.vop_fsync =		vop_stdfsync,
 	.vop_ioctl =		pefs_ioctl,
+	.vop_pathconf =		pefs_pathconf,
 };
