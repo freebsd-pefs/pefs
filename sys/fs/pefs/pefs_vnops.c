@@ -72,6 +72,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/namei.h>
 #include <sys/priv.h>
 #include <sys/sf_buf.h>
+#include <sys/stat.h>
 #include <sys/sysctl.h>
 #include <sys/sx.h>
 #include <sys/vnode.h>
@@ -654,6 +655,9 @@ pefs_truncate(struct vnode *vp, u_quad_t nsize, struct ucred *cred)
 	if (nsize == osize)
 		return (0);
 
+	if ((va.va_flags & (IMMUTABLE | APPEND)) != 0)
+		return (EPERM);
+
 	if (VOP_ISLOCKED(vp) != LK_EXCLUSIVE) {
 		vn_lock(vp, LK_UPGRADE | LK_RETRY);
 		error = VOP_GETATTR(lvp, &va, cred);
@@ -678,14 +682,20 @@ pefs_truncate(struct vnode *vp, u_quad_t nsize, struct ucred *cred)
 		    "offset=0x%jx, resid=0x%jx\n",
 		    puio->uio_offset, puio->uio_resid);
 		error = pefs_read_int(vp, puio, IO_UNIT, cred, osize);
+		if (error != 0)
+			goto out;
 		MPASS(puio->uio_resid == 0);
 		puio = pefs_chunk_uio(&pc, nsize - nskip, UIO_WRITE);
 		error = pefs_write_int(vp, puio, IO_UNIT, cred, nsize - nskip);
+		if (error != 0)
+			goto out;
 	}
 
 	VATTR_NULL(&va);
 	va.va_size = nsize;
-	VOP_SETATTR(lvp, &va, cred);
+	error = VOP_SETATTR(lvp, &va, cred);
+	if (error != 0)
+		goto out;
 	vnode_pager_setsize(vp, nsize);
 
 	if (nsize < osize)
