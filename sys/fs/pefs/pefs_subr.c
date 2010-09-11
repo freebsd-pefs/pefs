@@ -690,29 +690,11 @@ pefs_chunk_setsize(struct pefs_chunk *pc, size_t size)
 }
 
 #ifdef DIAGNOSTIC
-
-#ifdef KDB
-#define	pefs_checkvp_barrier	1
-#else
-#define	pefs_checkvp_barrier	0
-#endif
-
 struct vnode *
 pefs_checkvp(struct vnode *vp, char *fil, int lno)
 {
 	int interlock = 0;
 	struct pefs_node *a = VP_TO_PN(vp);
-#ifdef notyet
-	/*
-	 * Can't do this check because vop_reclaim runs
-	 * with a funny vop vector.
-	 */
-	if (vp->v_op != pefs_vnodeop_p) {
-		printf("pefs_checkvp: on non-null-node\n");
-		while (pefs_checkvp_barrier) /*WAIT*/ ;
-		panic("pefs_checkvp: on non-null-node");
-	};
-#endif
 	if (a->pn_lowervp == NULLVP) {
 		/* Should never happen */
 		int i; u_long *p;
@@ -740,12 +722,6 @@ pefs_checkvp(struct vnode *vp, char *fil, int lno)
 	};
 	if (interlock != 0)
 		VI_LOCK(vp);
-#ifdef notyet
-	printf("null %x/%d -> %x/%d [%s, %d]\n",
-	        PN_TO_VP(a), vrefcnt(PN_TO_VP(a)),
-		a->pn_lowervp, vrefcnt(a->pn_lowervp),
-		fil, lno);
-#endif
 	return (a->pn_lowervp);
 }
-#endif
+#endif /* DIAGNOSTIC */
