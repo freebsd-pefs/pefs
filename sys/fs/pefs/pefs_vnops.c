@@ -289,7 +289,9 @@ pefs_enccn_parsedir(struct pefs_dircache *pd, struct pefs_ctx *ctx,
 			sz -= de->d_reclen,
 			de = (struct dirent *)(((caddr_t)de) + de->d_reclen)) {
 		MPASS(de->d_reclen <= sz);
-		if (de->d_type == DT_WHT)
+		if (de->d_reclen == 0)
+			break;
+		if (de->d_type == DT_WHT || de->d_fileno == 0)
 			continue;
 		if (pefs_name_skip(de->d_name, de->d_namlen))
 			continue;
@@ -1337,9 +1339,11 @@ pefs_readdir_decrypt(struct pefs_dircache *pd, struct pefs_ctx *ctx,
 	for (de = (struct dirent*) mem, sz = *psize; sz > DIRENT_MINSIZE;
 	    de = de_next) {
 		MPASS(de->d_reclen <= sz);
+		if (de->d_reclen == 0)
+			break;
 		sz -= de->d_reclen;
 		de_next = (struct dirent *)(((caddr_t)de) + de->d_reclen);
-		if (de->d_type == DT_WHT)
+		if (de->d_type == DT_WHT || de->d_fileno == 0)
 			continue;
 		if (pefs_name_skip(de->d_name, de->d_namlen))
 			continue;
