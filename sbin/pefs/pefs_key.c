@@ -48,24 +48,24 @@ __FBSDID("$FreeBSD$");
 #include "pefs_ctl.h"
 
 struct algorithm {
-	const char *name;
-	uint32_t id;
-	uint32_t keybits;
+	const char		*name;
+	uint32_t		id;
+	uint32_t		keybits;
 };
 
 static struct algorithm algs[] = {
-	{ "aes128-xts", PEFS_ALG_AES_XTS, 128 },
-	{ "aes128", PEFS_ALG_AES_XTS, 128 },
-	{ "aes192-xts", PEFS_ALG_AES_XTS, 192 },
-	{ "aes192", PEFS_ALG_AES_XTS, 192 },
-	{ "aes256-xts", PEFS_ALG_AES_XTS, 256 },
-	{ "aes256", PEFS_ALG_AES_XTS, 256 },
-	{ "camellia128-xts", PEFS_ALG_CAMELLIA_XTS, 128 },
-	{ "camellia128", PEFS_ALG_CAMELLIA_XTS, 128 },
-	{ "camellia192-xts", PEFS_ALG_CAMELLIA_XTS, 192 },
-	{ "camellia192", PEFS_ALG_CAMELLIA_XTS, 192 },
-	{ "camellia256-xts", PEFS_ALG_CAMELLIA_XTS, 256 },
-	{ "camellia256", PEFS_ALG_CAMELLIA_XTS, 256 },
+	{ "aes128-xts",		PEFS_ALG_AES_XTS, 128 },
+	{ "aes128",		PEFS_ALG_AES_XTS, 128 },
+	{ "aes192-xts",		PEFS_ALG_AES_XTS, 192 },
+	{ "aes192",		PEFS_ALG_AES_XTS, 192 },
+	{ "aes256-xts",		PEFS_ALG_AES_XTS, 256 },
+	{ "aes256",		PEFS_ALG_AES_XTS, 256 },
+	{ "camellia128-xts",	PEFS_ALG_CAMELLIA_XTS, 128 },
+	{ "camellia128",	PEFS_ALG_CAMELLIA_XTS, 128 },
+	{ "camellia192-xts",	PEFS_ALG_CAMELLIA_XTS, 192 },
+	{ "camellia192",	PEFS_ALG_CAMELLIA_XTS, 192 },
+	{ "camellia256-xts",	PEFS_ALG_CAMELLIA_XTS, 256 },
+	{ "camellia256",	PEFS_ALG_CAMELLIA_XTS, 256 },
 	{ NULL, 0, 0 },
 };
 
@@ -93,17 +93,15 @@ pefs_alg_list(FILE *stream)
 	fprintf(stream, "Supported algorithms:\n");
 	for (prev = NULL, alg = algs; alg->name != NULL; prev = alg++) {
 		if (prev != NULL && alg->id == prev->id &&
-		    alg->keybits == prev->keybits) {
+		    alg->keybits == prev->keybits)
 			fprintf(stream, "\t%-16s (alias for %s)\n", alg->name, prev->name);
-		} else if (alg->id == PEFS_ALG_DEFAULT &&
-		    alg->keybits == PEFS_ALG_DEFAULT_KEYBITS) {
+		else if (alg->id == PEFS_ALG_DEFAULT &&
+		    alg->keybits == PEFS_ALG_DEFAULT_KEYBITS)
 			fprintf(stream, "\t%-16s (default)\n", alg->name);
-		} else {
+		else
 			fprintf(stream, "\t%s\n", alg->name);
-		}
 	}
 }
-
 
 int
 pefs_keyparam_setalg(struct pefs_keyparam *kp, const char *algname)
@@ -357,4 +355,3 @@ pefs_key_decrypt(struct pefs_xkeyenc *xe, const struct pefs_xkey *xk_parent)
 {
 	return (pefs_key_cipher(xe, 0, xk_parent));
 }
-

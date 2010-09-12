@@ -272,13 +272,11 @@ pefs_keychain_del(const char *filesystem, int flags, struct pefs_xkey *xk)
 				error = PEFS_ERR_NOENT;
 				pefs_warn("cannot delete key chain %016jx",
 				    pefs_keyid_as_int(xk->pxk_keyid));
-			} else {
+			} else
 				error = 0;
-			}
 		}
 	}
 	db->close(db);
 
 	return (error);
 }
-

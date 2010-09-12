@@ -28,13 +28,13 @@
 
 #include <sys/queue.h>
 
-#define PEFS_KEYCHAIN_USE		0x0001
-#define PEFS_KEYCHAIN_IGNORE_MISSING	0x0002
+#define	PEFS_KEYCHAIN_USE		0x0001
+#define	PEFS_KEYCHAIN_IGNORE_MISSING	0x0002
 
 struct pefs_keychain
 {
-	TAILQ_ENTRY(pefs_keychain) kc_entry;
-	struct pefs_xkey kc_key;
+	TAILQ_ENTRY(pefs_keychain)	kc_entry;
+	struct pefs_xkey		kc_key;
 };
 
 TAILQ_HEAD(pefs_keychain_head, pefs_keychain);

@@ -53,11 +53,11 @@ __FBSDID("$FreeBSD$");
 #include "pefs_ctl.h"
 #include "pefs_keychain.h"
 
-#define PATH_MOUNT		"/sbin/mount"
-#define PATH_UMOUNT		"/sbin/umount"
-#define PATH_DEVRANDOM		"/dev/random"
+#define	PATH_MOUNT		"/sbin/mount"
+#define	PATH_UMOUNT		"/sbin/umount"
+#define	PATH_DEVRANDOM		"/dev/random"
 
-#define PEFS_KEY_PROMPT_DEFAULT			"passphrase"
+#define	PEFS_KEY_PROMPT_DEFAULT			"passphrase"
 
 static void	pefs_usage(void);
 static void	pefs_usage_alg(void);
@@ -80,26 +80,26 @@ typedef int (*keyop_func_t)(struct pefs_keychain_head *kch, int fd,
     int verbose);
 
 struct command {
-	const char *name;
-	command_func_t func;
+	const char	*name;
+	command_func_t	func;
 };
 
 static struct command cmds[] = {
-	{ "mount", pefs_mount },
-	{ "unmount", pefs_unmount },
-	{ "umount", pefs_unmount },
-	{ "addkey", pefs_addkey },
-	{ "setkey", pefs_setkey },
-	{ "delkey", pefs_delkey },
-	{ "flushkeys", pefs_flushkeys },
-	{ "showkeys", pefs_showkeys },
-	{ "getkey", pefs_getkey },
-	{ "status", pefs_showkeys },
+	{ "mount",	pefs_mount },
+	{ "unmount",	pefs_unmount },
+	{ "umount",	pefs_unmount },
+	{ "addkey",	pefs_addkey },
+	{ "setkey",	pefs_setkey },
+	{ "delkey",	pefs_delkey },
+	{ "flushkeys",	pefs_flushkeys },
+	{ "showkeys",	pefs_showkeys },
+	{ "getkey",	pefs_getkey },
+	{ "status",	pefs_showkeys },
 	{ "randomchain", pefs_randomchain },
-	{ "addchain", pefs_addchain },
-	{ "delchain", pefs_delchain },
-	{ "showchains", pefs_showchains },
-	{ "showalgs", pefs_showalgs },
+	{ "addchain",	pefs_addchain },
+	{ "delchain",	pefs_delchain },
+	{ "showchains",	pefs_showchains },
+	{ "showalgs",	pefs_showalgs },
 	{ NULL, NULL },
 };
 
@@ -319,10 +319,9 @@ pefs_addkey_op(struct pefs_keychain_head *kch, int fd, int verbose)
 		if (ioctl(fd, PEFS_ADDKEY, &kc->kc_key) == -1) {
 			warn("cannot add key");
 			return (-1);
-		} else if (verbose) {
+		} else if (verbose)
 			printf("Key added: %016jx\n",
 			    pefs_keyid_as_int(kc->kc_key.pxk_keyid));
-		}
 	}
 
 	return (0);
@@ -336,10 +335,9 @@ pefs_delkey_op(struct pefs_keychain_head *kch, int fd, int verbose)
 	TAILQ_FOREACH(kc, kch, kc_entry) {
 		if (ioctl(fd, PEFS_DELKEY, &kc->kc_key) == -1) {
 			warn("cannot delete key");
-		} else if (verbose) {
+		} else if (verbose)
 			printf("Key deleted: %016jx\n",
 			    pefs_keyid_as_int(kc->kc_key.pxk_keyid));
-		}
 	}
 
 	return (0);
@@ -432,9 +430,8 @@ pefs_setkey(int argc, char *argv[])
 	if (ioctl(fd, PEFS_SETKEY, &k) == -1) {
 		warn("cannot set key");
 		error = PEFS_ERR_SYS;
-	} else if (verbose) {
+	} else if (verbose)
 		pefs_key_shownode(&k, argv[0]);
-	}
 
 	close(fd);
 
@@ -508,9 +505,8 @@ pefs_getkey(int argc, char *argv[])
 			warn("cannot get key");
 			error = PEFS_ERR_SYS;
 		}
-	} else if (testonly == 0) {
+	} else if (testonly == 0)
 		pefs_key_shownode(&k, argv[0]);
-	}
 
 	close(fd);
 
@@ -973,11 +969,10 @@ pefs_randomchain(int argc, char *argv[])
 		k[0].pxk_alg = PEFS_ALG_INVALID;
 		k[1].pxk_alg = PEFS_ALG_INVALID;
 		pefs_keychain_set(fsroot, &k[0], &k[1]);
-		if (verbose) {
+		if (verbose)
 			printf("Key chain set: %016jx -> %016jx\n",
 			    pefs_keyid_as_int(k[0].pxk_keyid),
 			    pefs_keyid_as_int(k[1].pxk_keyid));
-		}
 	}
 
 	close(fd);
@@ -1064,4 +1059,3 @@ main(int argc, char *argv[])
 
 	return (1);
 }
-

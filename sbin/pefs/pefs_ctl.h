@@ -28,50 +28,50 @@
 
 #include <inttypes.h>
 
-#define PEFS_FSTYPE			"pefs"
-#define PEFS_KLD			PEFS_FSTYPE
+#define	PEFS_FSTYPE			"pefs"
+#define	PEFS_KLD			PEFS_FSTYPE
 
-#define PEFS_ALG_DEFAULT		PEFS_ALG_AES_XTS
-#define PEFS_ALG_DEFAULT_KEYBITS	128
+#define	PEFS_ALG_DEFAULT		PEFS_ALG_AES_XTS
+#define	PEFS_ALG_DEFAULT_KEYBITS	128
 
-#define PEFS_KDF_ITERATIONS		50000
+#define	PEFS_KDF_ITERATIONS		50000
 
-#define PEFS_FILE_KEYCHAIN		".pefs.db"
-#define PEFS_FILE_KEYCONF		".pefs.conf"
+#define	PEFS_FILE_KEYCHAIN		".pefs.db"
+#define	PEFS_FILE_KEYCONF		".pefs.conf"
 
-#define PEFS_KEYCONF_ALG_IND		0
-#define PEFS_KEYCONF_ITERATIONS_IND	1
+#define	PEFS_KEYCONF_ALG_IND		0
+#define	PEFS_KEYCONF_ITERATIONS_IND	1
 
-#define PEFS_RANDOMCHAIN_MIN		16
-#define PEFS_RANDOMCHAIN_MAX		64
+#define	PEFS_RANDOMCHAIN_MIN		16
+#define	PEFS_RANDOMCHAIN_MAX		64
 
-#define PEFS_KEYENC_MAC_SIZE		(PEFS_KEY_SIZE / 2)
+#define	PEFS_KEYENC_MAC_SIZE		(PEFS_KEY_SIZE / 2)
 
-#define PEFS_ERR_GENERIC		1
-#define PEFS_ERR_USAGE			2
-#define PEFS_ERR_IO			3
-#define PEFS_ERR_SYS			4
-#define PEFS_ERR_NOENT			5
-#define PEFS_ERR_EXIST			6
-#define PEFS_ERR_INVALID		7
+#define	PEFS_ERR_GENERIC		1
+#define	PEFS_ERR_USAGE			2
+#define	PEFS_ERR_IO			3
+#define	PEFS_ERR_SYS			4
+#define	PEFS_ERR_NOENT			5
+#define	PEFS_ERR_EXIST			6
+#define	PEFS_ERR_INVALID		7
 
-#define PEFS_FS_IGNORE_TYPE		0x0001
+#define	PEFS_FS_IGNORE_TYPE		0x0001
 
 struct pefs_xkeyenc {
 	struct {
-		struct pefs_xkey ke_next;
-		uint32_t ke_alg;
-		uint32_t ke_keybits;
+		struct pefs_xkey	ke_next;
+		uint32_t		ke_alg;
+		uint32_t		ke_keybits;
 	} a;
-	u_char ke_mac[PEFS_KEYENC_MAC_SIZE];
+	u_char		ke_mac[PEFS_KEYENC_MAC_SIZE];
 };
 
 struct pefs_keyparam {
-	int kp_alg;
-	int kp_keybits;
-	int kp_nopassphrase;
-	int kp_iterations;
-	char *kp_keyfile;
+	int		kp_alg;
+	int		kp_keybits;
+	int		kp_nopassphrase;
+	int		kp_iterations;
+	char		*kp_keyfile;
 };
 
 void	pefs_warn(const char *, ...) __printf0like(1, 2);

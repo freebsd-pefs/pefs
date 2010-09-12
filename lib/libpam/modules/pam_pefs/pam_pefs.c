@@ -52,8 +52,8 @@ __FBSDID("$FreeBSD$");
 #include <syslog.h>
 #include <unistd.h>
 
-#define PAM_SM_AUTH
-#define PAM_SM_SESSION
+#define	PAM_SM_AUTH
+#define	PAM_SM_SESSION
 
 #include <security/pam_appl.h>
 #include <security/pam_modules.h>
@@ -65,8 +65,8 @@ __FBSDID("$FreeBSD$");
 #include "pefs_ctl.h"
 #include "pefs_keychain.h"
 
-#define PAM_PEFS_OPT_IGNORE_MISSING	"ignore_missing"
-#define PAM_PEFS_KEYS			"pam_pefs_keys"
+#define	PAM_PEFS_OPT_IGNORE_MISSING	"ignore_missing"
+#define	PAM_PEFS_KEYS			"pam_pefs_keys"
 
 static int pam_pefs_debug;
 
@@ -192,12 +192,10 @@ retry:
 		else
 			free(kch);
 
-
 		/* Switch back to arbitrator credentials */
 		openpam_restore_cred(pamh);
-	} else {
+	} else
 		pam_err = PAM_AUTH_ERR;
-	}
 
 	/*
 	 * If we tried an old token and didn't get anything, and
@@ -233,9 +231,8 @@ pam_sm_open_session(pam_handle_t *pamh, int flags __unused,
 	int fd, pam_err;
 
 	pam_err = pam_get_data(pamh, PAM_PEFS_KEYS, (const void **)&kch);
-	if (pam_err != PAM_SUCCESS || kch == NULL || TAILQ_EMPTY(kch)) {
+	if (pam_err != PAM_SUCCESS || kch == NULL || TAILQ_EMPTY(kch))
 		return (PAM_SUCCESS);
-	}
 
 	pam_err = pam_get_user(pamh, &user, NULL);
 	if (pam_err != PAM_SUCCESS)
