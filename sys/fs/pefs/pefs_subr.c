@@ -670,8 +670,6 @@ pefs_checkvp(struct vnode *vp, char *fil, int lno)
 		for (p = (u_long *) a, i = 0; i < 8; i++)
 			printf(" %lx", p[i]);
 		printf("\n");
-		/* wait for debugger */
-		while (pefs_checkvp_barrier) /*WAIT*/ ;
 		panic("pefs_checkvp");
 	}
 	if (mtx_owned(VI_MTX(vp)) != 0) {
@@ -684,8 +682,6 @@ pefs_checkvp(struct vnode *vp, char *fil, int lno)
 		for (p = (u_long *) a, i = 0; i < 8; i++)
 			printf(" %lx", p[i]);
 		printf("\n");
-		/* wait for debugger */
-		while (pefs_checkvp_barrier) /*WAIT*/ ;
 		panic ("null with unref'ed lowervp");
 	};
 	if (interlock != 0)
