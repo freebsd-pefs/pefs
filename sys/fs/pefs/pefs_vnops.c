@@ -681,7 +681,7 @@ pefs_truncate(struct vnode *vp, u_quad_t nsize, struct ucred *cred)
 		if (error != 0 || pc.pc_size == diff)
 			goto out;
 	}
-	
+
 	if (nskip != 0) {
 		pefs_chunk_setsize(&pc, nskip);
 		pefs_chunk_zero(&pc);
