@@ -1,6 +1,6 @@
 /*-
  * Copyright (c) 2003 Networks Associates Technology, Inc.
- * Copyright (c) 2009 Gleb Kurtsou <gk@FreeBSD.org>
+ * Copyright (c) 2009 Gleb Kurtsou
  * All rights reserved.
  *
  * This software was developed for the FreeBSD Project by ThinkSec AS and
