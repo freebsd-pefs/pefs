@@ -831,6 +831,19 @@ pefs_accessx(struct vop_accessx_args *ap)
 }
 
 static int
+pefs_getacl(struct vop_getacl_args *ap)
+{
+	struct vnode *vp = ap->a_vp;
+	struct vnode *lvp = PEFS_LOWERVP(vp);
+	int error;
+
+	ap->a_vp = lvp;
+	error = VOP_GETACL_AP(ap);
+	ap->a_vp = vp;
+	return (error);
+}
+
+static int
 pefs_close(struct vop_close_args *ap)
 {
 	struct vnode *vp = ap->a_vp;
@@ -2432,6 +2445,7 @@ struct vop_vector pefs_vnodeops = {
 	.vop_default =		&default_vnodeops,
 	.vop_access =		pefs_access,
 	.vop_accessx =		pefs_accessx,
+	.vop_getacl =		pefs_getacl,
 	.vop_close =		pefs_close,
 	.vop_getattr =		pefs_getattr,
 	.vop_getwritemount =	pefs_getwritemount,
