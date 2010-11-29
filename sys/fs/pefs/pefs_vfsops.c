@@ -152,6 +152,7 @@ pefs_mount(struct mount *mp)
 	error = vfs_getopt(mp->mnt_optnew, "from", (void **)&from, &len);
 	if (error || from[len - 1] != '\0')
 		return (EINVAL);
+	vfs_mountedfrom(mp, from);
 
 	/*
 	 * Unlock lower node to avoid deadlock.
@@ -165,19 +166,18 @@ pefs_mount(struct mount *mp)
 	/*
 	 * Find lower node
 	 */
-	NDINIT(ndp, LOOKUP, FOLLOW|LOCKLEAF, UIO_SYSSPACE, from, curthread);
+	NDINIT(ndp, LOOKUP, FOLLOW, UIO_SYSSPACE, from, curthread);
 	error = namei(ndp);
 
 	if (error == 0) {
 		from_free = NULL;
 		error = vn_fullpath(curthread, ndp->ni_vp, &from,
 		    &from_free);
-		if (error != 0)
-			NDFREE(ndp, NDF_ONLY_PNBUF);
-		else
+		if (error == 0)
 			vfs_mountedfrom(mp, from);
+		else
+			error = 0;
 		free(from_free, M_TEMP);
-
 	}
 	/*
 	 * Re-lock vnode.
@@ -193,6 +193,12 @@ pefs_mount(struct mount *mp)
 	 * Sanity check on lower vnode
 	 */
 	lowerrootvp = ndp->ni_vp;
+	vn_lock(lowerrootvp, LK_EXCLUSIVE | LK_RETRY);
+	if ((lowerrootvp->v_iflag & VI_DOOMED) != 0) {
+		PEFSDEBUG("pefs_mount: target vnode disappeared\n");
+		vput(lowerrootvp);
+		return (ENOENT);
+	}
 
 	/*
 	 * Check multi pefs mount to avoid `lock against myself' panic.
