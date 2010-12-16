@@ -512,7 +512,7 @@ pefs_lookup(struct vop_cachedlookup_args *ap)
 		    (cnp->cn_flags & DOWHITEOUT) &&
 		    (cnp->cn_flags & ISWHITEOUT)))) {
 			/*
-			 * Some filesystems (like ufs) update internal inode
+			 * Some file systems (like ufs) update internal inode
 			 * fields during VOP_LOOKUP which are later used by
 			 * VOP_CREATE, VOP_MKDIR, etc. That's why we can't
 			 * return EJUSTRETURN here and have to perform
@@ -729,7 +729,7 @@ pefs_setattr(struct vop_setattr_args *ap)
 		case VREG:
 		case VLNK:
 			/*
-			 * Disallow write attempts if the filesystem is
+			 * Disallow write attempts if the file system is
 			 * mounted read-only.
 			 */
 			if ((vp->v_mount->mnt_flag & MNT_RDONLY) ||
@@ -783,7 +783,7 @@ pefs_access_checkmode(struct vnode *vp, accmode_t accmode)
 	/*
 	 * Disallow write attempts on read-only layers;
 	 * unless the file is a socket, fifo, or a block or
-	 * character device resident on the filesystem.
+	 * character device resident on the file system.
 	 */
 	if (accmode & VWRITE) {
 		switch (vp->v_type) {
@@ -1142,7 +1142,7 @@ pefs_lock(struct vop_lock1_args *ap)
 
 		/*
 		 * We might have slept to get the lock and someone might have
-		 * clean our vnode already, switching vnode lock from one in
+		 * cleaned our vnode already, switching vnode lock from one in
 		 * lowervp to v_lock in our own vnode structure.  Handle this
 		 * case by reacquiring correct lock in requested mode.
 		 */
@@ -1211,16 +1211,6 @@ pefs_unlock(struct vop_unlock_args *ap)
 	return (error);
 }
 
-/*
- * There is no way to tell that someone issued remove/rmdir operation
- * on the underlying filesystem. For now we just have to release lowervp
- * as soon as possible.
- *
- * Note, we can't release any resources nor remove vnode from hash before
- * appropriate VXLOCK stuff is is done because other process can find this
- * vnode in hash during inactivation and may be sitting in vget() and waiting
- * for pefs_inactive to unlock vnode. Thus we will do all those in VOP_RECLAIM.
- */
 static int
 pefs_inactive(struct vop_inactive_args *ap)
 {
@@ -1251,9 +1241,6 @@ pefs_inactive(struct vop_inactive_args *ap)
 	return (0);
 }
 
-/*
- * Now, the VXLOCK is in force and we're free to destroy the null vnode.
- */
 static int
 pefs_reclaim(struct vop_reclaim_args *ap)
 {

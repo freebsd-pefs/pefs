@@ -486,7 +486,7 @@ pefs_getkey(int argc, char *argv[])
 		pefs_usage();
 	}
 
-	/* only check filesystem type */
+	/* only check file system type */
 	if (pefs_getfsroot(argv[0], 0, NULL, 0) != 0)
 		return (PEFS_ERR_INVALID);
 
@@ -582,7 +582,7 @@ pefs_mount(int argc, char *argv[])
 		switch(i) {
 		case 't':
 			if (strcmp(optarg, PEFS_FSTYPE) != 0) {
-				warnx("invalid filesystem type: %s",
+				warnx("invalid file system type: %s",
 				    optarg);
 				return (PEFS_ERR_USAGE);
 			}

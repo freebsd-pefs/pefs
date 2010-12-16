@@ -54,8 +54,8 @@ __FBSDID("$FreeBSD$");
 #define	Assert(Cond)		(void)0
 
 /*
- * Algorithm is basicly standard base64 with few exceptions:
- *  - filesystem-friendly alphabet
+ * Algorithm is standard base64 with few exceptions:
+ *  - file system friendly alphabet
  *  - no paddings and whitespace skip
  */
 static const char Base64[] =

@@ -76,7 +76,7 @@ dircache_init(struct mount *mp, int opt, struct pefs_mount *pm)
 	if (opt < 0)
 		opt = support;
 	else if (opt > 0 && support == 0) {
-		printf("pefs: dircache is not supported by filesystem: %s\n",
+		printf("pefs: dircache is not supported by file system: %s\n",
 		    lowerfs);
 		opt = 0;
 	}

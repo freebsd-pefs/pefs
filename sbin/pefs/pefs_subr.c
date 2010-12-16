@@ -63,7 +63,7 @@ pefs_getfsroot(const char *path, int flags, char *fsroot, size_t size)
 		if ((flags & PEFS_FS_IGNORE_TYPE) != 0)
 			realfsroot = path;
 		else {
-			pefs_warn("invalid filesystem type: %s", path);
+			pefs_warn("invalid file system type: %s", path);
 			return (PEFS_ERR_INVALID);
 		}
 	}

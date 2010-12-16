@@ -72,7 +72,7 @@ static uma_zone_t		pefs_node_zone;
 MALLOC_DEFINE(M_PEFSHASH, "pefs_hash", "PEFS hash table");
 MALLOC_DEFINE(M_PEFSBUF, "pefs_buf", "PEFS buffers");
 
-SYSCTL_NODE(_vfs, OID_AUTO, pefs, CTLFLAG_RW, 0, "PEFS filesystem");
+SYSCTL_NODE(_vfs, OID_AUTO, pefs, CTLFLAG_RW, 0, "PEFS file system");
 
 static u_int	pefs_nodes;
 SYSCTL_UINT(_vfs_pefs, OID_AUTO, nodes, CTLFLAG_RD, &pefs_nodes, 0,
