@@ -48,7 +48,7 @@ __FBSDID("$FreeBSD$");
 #include <fs/pefs/pefs.h>
 #include <fs/pefs/pefs_dircache.h>
 
-#define	DIRCACHE_SIZE_ENV	"vfs.pefs.dircache_size"
+#define	DIRCACHE_SIZE_ENV	"vfs.pefs.dircache.buckets"
 #define	DIRCACHE_SIZE_MIN	512
 #define	DIRCACHE_SIZE_DEFAULT	(desiredvnodes / 8)
 
@@ -68,16 +68,19 @@ static u_long			pefs_dircache_hashmask;
 static uma_zone_t		dircache_zone;
 static uma_zone_t		dircache_entry_zone;
 
+SYSCTL_NODE(_vfs_pefs, OID_AUTO, dircache, CTLFLAG_RW, 0,
+    "PEFS directory cache");
+
 int		pefs_dircache_enable = 1;
-SYSCTL_INT(_vfs_pefs, OID_AUTO, dircache_enable, CTLFLAG_RW,
+SYSCTL_INT(_vfs_pefs_dircache, OID_AUTO, enable, CTLFLAG_RW,
     &pefs_dircache_enable, 0, "Enable dircache");
 
-static int	dircache_size = 0;
-SYSCTL_INT(_vfs_pefs, OID_AUTO, dircache_size, CTLFLAG_RD,
-    &dircache_size, 0, "Number of dircache hash table entries");
+static u_long	dircache_buckets = 0;
+SYSCTL_ULONG(_vfs_pefs_dircache, OID_AUTO, buckets, CTLFLAG_RD,
+    &dircache_buckets, 0, "Number of dircache hash table buckets");
 
-static int	dircache_entries = 0;
-SYSCTL_INT(_vfs_pefs, OID_AUTO, dircache_entries, CTLFLAG_RD,
+static u_long	dircache_entries = 0;
+SYSCTL_ULONG(_vfs_pefs_dircache, OID_AUTO, entries, CTLFLAG_RD,
     &dircache_entries, 0, "Entries in dircache");
 
 static void	dircache_entry_free(struct pefs_dircache_entry *pde);
@@ -85,10 +88,10 @@ static void	dircache_entry_free(struct pefs_dircache_entry *pde);
 void
 pefs_dircache_init(void)
 {
-	getenv_int(DIRCACHE_SIZE_ENV, &dircache_size);
+	TUNABLE_ULONG_FETCH(DIRCACHE_SIZE_ENV, &dircache_buckets);
 
-	if (dircache_size < DIRCACHE_SIZE_MIN)
-		dircache_size = DIRCACHE_SIZE_DEFAULT;
+	if (dircache_buckets < DIRCACHE_SIZE_MIN)
+		dircache_buckets = DIRCACHE_SIZE_DEFAULT;
 
 	dircache_zone = uma_zcreate("pefs_dircache",
 	    sizeof(struct pefs_dircache), NULL, NULL, NULL, NULL,
@@ -97,9 +100,9 @@ pefs_dircache_init(void)
 	    sizeof(struct pefs_dircache_entry), NULL, NULL, NULL,
 	    (uma_fini) bzero, UMA_ALIGN_PTR, 0);
 
-	dircache_tbl = hashinit(dircache_size, M_PEFSHASH,
+	dircache_tbl = hashinit(dircache_buckets, M_PEFSHASH,
 	    &pefs_dircache_hashmask);
-	dircache_enctbl = hashinit(dircache_size, M_PEFSHASH,
+	dircache_enctbl = hashinit(dircache_buckets, M_PEFSHASH,
 	    &pefs_dircache_hashmask);
 	mtx_init(&dircache_mtx, "pefs_dircache_mtx", NULL, MTX_DEF);
 }

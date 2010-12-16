@@ -348,19 +348,19 @@ Unlike
 .Nm
 doesn't recycle vnodes as early as possible, but expects kernel to recycle
 vnodes when necessary.
-.It Va vfs.pefs.dircache_enable
+.It Va vfs.pefs.dircache.enable
 Enable directory content caching.
 Content caching can only be enabled for file systems that are known to properly
 propagate changes to upper levels, and it's permanently disabled for the rest.
 When disabled directory cache subsystem is still used as a file name decryption
 cache for all underlying file systems.
-.It Va vfs.pefs.dircache_entries
+.It Va vfs.pefs.dircache.entries
 Number of entries in directory cache.
 Directory cache is mainly used as a file name decryption cache, but can also be
 used to cache directory content if underlying file system is known to propagate
 changes to upper levels properly.
-.It Va vfs.pefs.dircache_size
-Dircache hash table size.
+.It Va vfs.pefs.dircache.buckets
+Number of dircache hash table buckets.
 Value can be set as a kernel environment variable by specifying it in
 .Ar /boot/loader.conf
 file, or using

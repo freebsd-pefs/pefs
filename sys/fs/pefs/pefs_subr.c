@@ -74,8 +74,8 @@ MALLOC_DEFINE(M_PEFSBUF, "pefs_buf", "PEFS buffers");
 
 SYSCTL_NODE(_vfs, OID_AUTO, pefs, CTLFLAG_RW, 0, "PEFS file system");
 
-static u_int	pefs_nodes;
-SYSCTL_UINT(_vfs_pefs, OID_AUTO, nodes, CTLFLAG_RD, &pefs_nodes, 0,
+static u_long	pefs_nodes;
+SYSCTL_ULONG(_vfs_pefs, OID_AUTO, nodes, CTLFLAG_RD, &pefs_nodes, 0,
     "Allocated nodes");
 
 static void	pefs_node_free_proc(void *, int);
