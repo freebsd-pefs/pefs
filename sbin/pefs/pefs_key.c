@@ -291,20 +291,18 @@ pefs_key_cipher(struct pefs_xkeyenc *xe, int enc,
 	u_char *data = (u_char *) &xe->a;
 	EVP_CIPHER_CTX ctx;
 	u_char key[PEFS_KEY_SIZE];
+	u_char iv[PEFS_KEY_SIZE];
 	u_char mac[PEFS_KEYENC_MAC_SIZE];
 	int outsize;
-	char idx;
 
-	idx = 1;
 	bzero(key, PEFS_KEY_SIZE);
 	hmac_sha512_init(&hmac_ctx, xk_parent->pxk_key, PEFS_KEY_SIZE);
-	hmac_sha512_update(&hmac_ctx, key, PEFS_KEY_SIZE);
 	hmac_sha512_update(&hmac_ctx, magic_enckey_info,
 	    sizeof(magic_enckey_info));
-	hmac_sha512_update(&hmac_ctx, &idx, sizeof(idx));
 	hmac_sha512_final(&hmac_ctx, key, PEFS_KEY_SIZE);
 
 	hmac_sha512_init(&hmac_ctx, key, PEFS_KEY_SIZE);
+
 	if (!enc) {
 		hmac_sha512_update(&hmac_ctx, data, datasize);
 		hmac_sha512_final(&hmac_ctx, mac, PEFS_KEYENC_MAC_SIZE);
@@ -317,7 +315,8 @@ pefs_key_cipher(struct pefs_xkeyenc *xe, int enc,
 	EVP_CipherInit_ex(&ctx, EVP_aes_128_cfb(), NULL, NULL, NULL, enc);
 	EVP_CIPHER_CTX_set_key_length(&ctx, keysize);
 	EVP_CIPHER_CTX_set_padding(&ctx, 0);
-	EVP_CipherInit_ex(&ctx, NULL, NULL, key, key, enc);
+	bzero(iv, sizeof(iv));
+	EVP_CipherInit_ex(&ctx, NULL, NULL, key, iv, enc);
 	bzero(key, sizeof(key));
 
 	if (EVP_CipherUpdate(&ctx, data, &outsize, data, datasize) == 0) {
