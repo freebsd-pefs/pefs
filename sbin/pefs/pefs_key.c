@@ -40,12 +40,13 @@ __FBSDID("$FreeBSD$");
 #include <fcntl.h>
 
 #include <crypto/hmac/hmac_sha512.h>
+#include <crypto/rijndael/rijndael.h>
 #include <fs/pefs/pefs.h>
 #include <geom/eli/pkcs5v2.h>
 
-#include <openssl/evp.h>
-
 #include "pefs_ctl.h"
+
+#define AES_BLOCK_SIZE		16
 
 struct algorithm {
 	const char		*name;
@@ -71,6 +72,34 @@ static struct algorithm algs[] = {
 
 static char magic_keyid_info[] = "<KEY ID>";
 static char magic_enckey_info[] = "<ENCRYPTED KEY>";
+
+static void
+pefs_aes_ctr(const rijndael_ctx *aes_ctx, const uint8_t *iv,
+    const uint8_t *plaintext, uint8_t *ciphertext, int len)
+{
+	uint8_t ctr[AES_BLOCK_SIZE];
+	uint8_t block[AES_BLOCK_SIZE];
+	int l, i;
+
+	if (iv != NULL)
+		memcpy(ctr, iv, sizeof(ctr));
+	else
+		bzero(ctr, sizeof(ctr));
+
+	while (len > 0) {
+		rijndael_encrypt(aes_ctx, ctr, block);
+		l = (len < AES_BLOCK_SIZE ? len : AES_BLOCK_SIZE);
+		for (i = 0; i < l; i++)
+			*(ciphertext++) = block[i] ^ *(plaintext++);
+		/* Increment counter */
+		for (i = 0; i < AES_BLOCK_SIZE; i++) {
+			ctr[i]++;
+			if (ctr[i] != 0)
+				break;
+		}
+		len -= l;
+	}
+}
 
 const char *
 pefs_alg_name(struct pefs_xkey *xk)
@@ -285,15 +314,13 @@ static int
 pefs_key_cipher(struct pefs_xkeyenc *xe, int enc,
     const struct pefs_xkey *xk_parent)
 {
-	const int keysize = 128 / 8;
-	const int datasize = sizeof(xe->a);
 	struct hmac_sha512_ctx hmac_ctx;
-	u_char *data = (u_char *) &xe->a;
-	EVP_CIPHER_CTX ctx;
-	u_char key[PEFS_KEY_SIZE];
-	u_char iv[PEFS_KEY_SIZE];
-	u_char mac[PEFS_KEYENC_MAC_SIZE];
-	int outsize;
+	rijndael_ctx enc_ctx;
+	uint8_t key[PEFS_KEY_SIZE];
+	uint8_t mac[PEFS_KEYENC_MAC_SIZE];
+	uint8_t *data = (uint8_t *) &xe->a;
+	const int datasize = sizeof(xe->a);
+	const int keysize = 128 / 8;
 
 	bzero(key, PEFS_KEY_SIZE);
 	hmac_sha512_init(&hmac_ctx, xk_parent->pxk_key, PEFS_KEY_SIZE);
@@ -311,27 +338,10 @@ pefs_key_cipher(struct pefs_xkeyenc *xe, int enc,
 			return (PEFS_ERR_INVALID);
 	}
 
-	EVP_CIPHER_CTX_init(&ctx);
-	EVP_CipherInit_ex(&ctx, EVP_aes_128_cfb(), NULL, NULL, NULL, enc);
-	EVP_CIPHER_CTX_set_key_length(&ctx, keysize);
-	EVP_CIPHER_CTX_set_padding(&ctx, 0);
-	bzero(iv, sizeof(iv));
-	EVP_CipherInit_ex(&ctx, NULL, NULL, key, iv, enc);
+	rijndael_set_key(&enc_ctx, key, keysize * 8);
+	pefs_aes_ctr(&enc_ctx, NULL, data, data, datasize);
 	bzero(key, sizeof(key));
-
-	if (EVP_CipherUpdate(&ctx, data, &outsize, data, datasize) == 0) {
-		EVP_CIPHER_CTX_cleanup(&ctx);
-		return (PEFS_ERR_INVALID);
-	}
-	assert(outsize == (int)datasize);
-
-	if (EVP_CipherFinal_ex(&ctx, data + outsize, &outsize) == 0) {
-		EVP_CIPHER_CTX_cleanup(&ctx);
-		return (PEFS_ERR_INVALID);
-	}
-	assert(outsize == 0);
-
-	EVP_CIPHER_CTX_cleanup(&ctx);
+	bzero(&enc_ctx, sizeof(enc_ctx));
 
 	if (enc) {
 		hmac_sha512_update(&hmac_ctx, data, datasize);
