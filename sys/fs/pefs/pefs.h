@@ -113,6 +113,7 @@ struct pefs_node {
 
 #define	PM_ROOT_CANRECURSE		0x01
 #define	PM_DIRCACHE			0x02
+#define	PM_ASYNCRECLAIM			0x04
 
 struct pefs_mount {
 	struct mount		*pm_lowervfs;

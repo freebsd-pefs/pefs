@@ -492,14 +492,18 @@ pefs_node_free_proc(void *context __unused, int pending __unused)
 void
 pefs_node_asyncfree(struct pefs_node *pn)
 {
+	int flags;
+
 	PEFSDEBUG("pefs_node_asyncfree: free node %p\n", pn);
 	pefs_key_release(pn->pn_tkey.ptk_key);
 	pefs_dircache_free(pn->pn_dircache);
 	mtx_lock(&pefs_node_listmtx);
 	pefs_nodes--;
 	LIST_REMOVE(pn, pn_listentry);
+	flags = VFS_TO_PEFS(PN_TO_VP(pn)->v_mount)->pm_flags;
 	/* XXX Find a better way to check for safe context */
-	if (memcmp(curthread->td_name, "vnlru", 6) == 0) {
+	if ((flags & PM_ASYNCRECLAIM) == 0 ||
+	    memcmp(curthread->td_name, "vnlru", 6) == 0) {
 		mtx_unlock(&pefs_node_listmtx);
 		pefs_node_free(pn);
 		return;

@@ -47,9 +47,23 @@ __FBSDID("$FreeBSD$");
 
 #include <fs/pefs/pefs.h>
 
-static const char		*pefs_dircache_support[] = {
-	"zfs",
-	NULL
+struct pefs_opt_descr {
+	char	*fs;
+	int	initial;
+	int	forbid;
+};
+
+static const struct pefs_opt_descr pefs_opt_support[] = {
+	{
+		.fs = "zfs",
+		.initial = PM_DIRCACHE | PM_ASYNCRECLAIM,
+		.forbid = 0
+	},
+	{	/* default flags */
+		.fs = NULL,
+		.initial = 0,
+		.forbid = PM_DIRCACHE,
+	}
 };
 
 static const char		*pefs_opts[] = {
@@ -57,35 +71,37 @@ static const char		*pefs_opts[] = {
 	"export",
 	"dircache",
 	"nodircache",
+	"asyncreclaim",
 	NULL
 };
 
 static MALLOC_DEFINE(M_PEFSMNT, "pefs_mount", "PEFS mount structure");
 
 static void
-dircache_init(struct mount *mp, int opt, struct pefs_mount *pm)
+pefs_opt_set(struct mount *mp, int opt, struct pefs_mount *pm,
+    int flag, const char *flagname)
 {
+	const struct pefs_opt_descr *descr;
 	char *lowerfs;
-	int support;
 
 	lowerfs = mp->mnt_vnodecovered->v_mount->mnt_vfc->vfc_name;
-	for (support = 0; pefs_dircache_support[support] != NULL; support++)
-		if (strcmp(lowerfs, pefs_dircache_support[support]) == 0)
+	for (descr = pefs_opt_support; descr->fs != NULL; descr++)
+		if (strcmp(lowerfs, descr->fs) == 0)
 			break;
-	support = pefs_dircache_support[support] != NULL ? 1 : 0;
 	if (opt < 0)
-		opt = support;
-	else if (opt > 0 && support == 0) {
-		printf("pefs: dircache is not supported by file system: %s\n",
-		    lowerfs);
+		opt = descr->initial & flag;
+	else if (opt > 0 && (descr->forbid & flag) != 0) {
+		printf("pefs: %s is not supported by file system: %s\n",
+		    flagname, lowerfs);
 		opt = 0;
 	}
 
 	if (opt == 0)
-		pm->pm_flags &= ~PM_DIRCACHE;
+		pm->pm_flags &= ~flag;
 	else
-		pm->pm_flags |= PM_DIRCACHE;
-	PEFSDEBUG("pefs_mount: dircache %s\n", (opt ? "enabled" : "disabed"));
+		pm->pm_flags |= flag;
+	PEFSDEBUG("pefs_mount: %s %s\n",
+	    flagname, (opt ? "enabled" : "disabed"));
 }
 
 static int
@@ -115,7 +131,7 @@ pefs_mount(struct mount *mp)
 	struct pefs_mount *pm;
 	char *from, *from_free;
 	int isvnunlocked = 0, len;
-	int opt_dircache;
+	int opt_dircache, opt_asyncreclaim;
 	int error = 0;
 
 	PEFSDEBUG("pefs_mount(mp = %p)\n", (void *)mp);
@@ -134,13 +150,24 @@ pefs_mount(struct mount *mp)
 		vfs_deleteopt(mp->mnt_optnew, "nodircache");
 		opt_dircache = 0;
 	}
+	opt_asyncreclaim = -1;
+	if (vfs_flagopt(mp->mnt_optnew, "asyncreclaim", NULL, 0)) {
+		vfs_deleteopt(mp->mnt_optnew, "asyncreclaim");
+		opt_asyncreclaim = 1;
+	}
 
 	if (mp->mnt_flag & MNT_UPDATE) {
 		error = EOPNOTSUPP;
 		if (vfs_flagopt(mp->mnt_optnew, "export", NULL, 0))
 			error = 0;
 		if (opt_dircache >= 0) {
-			dircache_init(mp, opt_dircache, mp->mnt_data);
+			pefs_opt_set(mp, opt_dircache, mp->mnt_data,
+			    PM_DIRCACHE, "dircache");
+			error = 0;
+		}
+		if (opt_asyncreclaim >= 0) {
+			pefs_opt_set(mp, opt_dircache, mp->mnt_data,
+			    PM_ASYNCRECLAIM, "asyncreclaim");
 			error = 0;
 		}
 		return (error);
@@ -233,7 +260,8 @@ pefs_mount(struct mount *mp)
 	pm->pm_lowervfs = lowerrootvp->v_mount;
 	if (lowerrootvp == mp->mnt_vnodecovered)
 		pm->pm_flags |= PM_ROOT_CANRECURSE;
-	dircache_init(mp, opt_dircache, pm);
+	pefs_opt_set(mp, opt_dircache, pm, PM_DIRCACHE, "dircache");
+	pefs_opt_set(mp, opt_asyncreclaim, pm, PM_ASYNCRECLAIM, "asyncreclaim");
 
 	/*
 	 * Save reference.  Each mount also holds
