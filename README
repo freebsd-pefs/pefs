@@ -1,4 +1,4 @@
-pefs is a kernel level stacked cryptographic filesystem for FreeBSD.
+PEFS is a kernel level stacked cryptographic filesystem for FreeBSD.
 
 The following is a list of its most important features:
 
@@ -19,7 +19,8 @@ The following is a list of its most important features:
 *   Uses modern cryptographic algorithms: AES and Camellia in XTS mode,
     PKCS#5v2 and HKDF for key generation.
 
-pefs blog: http://glebkurtsou.blogspot.com/search/label/pefs
+FreeBSD wiki page: http://wiki.freebsd.org/PEFS
+blog: http://glebkurtsou.blogspot.com/search/label/pefs
 
 
 Installation instructions:
