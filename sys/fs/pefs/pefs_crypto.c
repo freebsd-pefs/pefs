@@ -456,8 +456,6 @@ pefs_name_checksum(struct pefs_ctx *ctx, struct pefs_key *pk, char *csum,
 }
 
 static __inline void
-pefs_name_enccbc(struct pefs_ctx *ctx, struct pefs_key *pk,
-    u_char *data, ssize_t size)
 {
 	u_char *prev;
 	int i;
@@ -466,11 +464,9 @@ pefs_name_enccbc(struct pefs_ctx *ctx, struct pefs_key *pk,
 	data += PEFS_NAME_CSUM_SIZE;
 	MPASS(size > 0 && size % PEFS_NAME_BLOCK_SIZE == 0);
 
-	pefs_ctx_cpy(ctx, pk->pk_name_ctx);
-
 	/* Start with zero iv */
 	while (1) {
-		rijndael_encrypt(&ctx->o.pctx_aes, data, data);
+		pefs_alg_aes.pa_encrypt(pk->pk_name_ctx, data, data);
 		prev = data;
 		data += PEFS_NAME_BLOCK_SIZE;
 		size -= PEFS_NAME_BLOCK_SIZE;
@@ -482,8 +478,7 @@ pefs_name_enccbc(struct pefs_ctx *ctx, struct pefs_key *pk,
 }
 
 static __inline void
-pefs_name_deccbc(struct pefs_ctx *ctx, struct pefs_key *pk,
-    u_char *data, ssize_t size)
+pefs_name_deccbc(struct pefs_key *pk, u_char *data, ssize_t size)
 {
 	u_char tmp[PEFS_NAME_BLOCK_SIZE], iv[PEFS_NAME_BLOCK_SIZE];
 	int i;
@@ -492,12 +487,10 @@ pefs_name_deccbc(struct pefs_ctx *ctx, struct pefs_key *pk,
 	data += PEFS_NAME_CSUM_SIZE;
 	MPASS(size > 0 && size % PEFS_NAME_BLOCK_SIZE == 0);
 
-	pefs_ctx_cpy(ctx, pk->pk_name_ctx);
-
 	bzero(iv, PEFS_NAME_BLOCK_SIZE);
 	while (size > 0) {
 		memcpy(tmp, data, PEFS_NAME_BLOCK_SIZE);
-		rijndael_decrypt(&ctx->o.pctx_aes, data, data);
+		pefs_alg_aes.pa_decrypt(pk->pk_name_ctx, data, data);
 		for (i = 0; i < PEFS_NAME_BLOCK_SIZE; i++)
 			data[i] ^= iv[i];
 		memcpy(iv, tmp, PEFS_NAME_BLOCK_SIZE);
@@ -539,7 +532,7 @@ pefs_name_encrypt(struct pefs_ctx *ctx, struct pefs_tkey *ptk,
 	memcpy(buf + PEFS_NAME_CSUM_SIZE + PEFS_TWEAK_SIZE, plain, plain_len);
 
 	size = pefs_name_pad(buf, size, sizeof(buf));
-	pefs_name_enccbc(ctx, ptk->ptk_key, buf, size);
+	pefs_name_enccbc(ptk->ptk_key, buf, size);
 	pefs_name_checksum(ctx, ptk->ptk_key, buf, buf, size);
 
 	if (free_ctx != 0)
@@ -618,7 +611,7 @@ pefs_name_decrypt(struct pefs_ctx *ctx, struct pefs_key *pk,
 	if (ki == NULL)
 		return (-EINVAL);
 
-	pefs_name_deccbc(ctx, ki, plain, r);
+	pefs_name_deccbc(ki, plain, r);
 
 	if (ptk != NULL) {
 		ptk->ptk_key = ki;
