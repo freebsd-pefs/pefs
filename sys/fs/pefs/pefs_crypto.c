@@ -46,6 +46,7 @@ __FBSDID("$FreeBSD$");
 
 #include <fs/pefs/pefs.h>
 #include <fs/pefs/pefs_crypto.h>
+#include <fs/pefs/pefs_aesni.h>
 #include <fs/pefs/vmac.h>
 
 #define	PEFS_NAME_KEY_BITS	128
@@ -61,6 +62,18 @@ struct pefs_ctx {
 		rijndael_ctx	pctx_aes;
 		struct hmac_sha512_ctx pctx_hmac;
 		vmac_ctx_t	pctx_vmac;
+#ifdef PEFS_AESNI
+		struct aesni_session pctx_aesni;
+#endif
+	} o;
+};
+
+struct pefs_session {
+	union {
+		int dummy;
+#ifdef PEFS_AESNI
+		struct pefs_aesni_ses ps_aesni;
+#endif
 	} o;
 };
 
@@ -69,19 +82,29 @@ static uma_zone_t		pefs_key_zone;
 
 static const char		magic_keyinfo[] = "PEFSKEY";
 
-static const struct pefs_alg pefs_alg_aes = {
+static struct pefs_alg pefs_alg_aes = {
 	.pa_id =		PEFS_ALG_AES_XTS,
+#ifdef PEFS_AESNI
+	.pa_init =		pefs_aesni_init,
+#endif
 	.pa_keysetup =		(algop_keysetup_t *)rijndael_set_key,
 	.pa_encrypt =		(algop_crypt_t *)rijndael_encrypt,
 	.pa_decrypt =		(algop_crypt_t *)rijndael_decrypt,
 };
 
-static const struct pefs_alg pefs_alg_camellia = {
+static struct pefs_alg pefs_alg_camellia = {
 	.pa_id =		PEFS_ALG_CAMELLIA_XTS,
 	.pa_keysetup =		(algop_keysetup_t *)camellia_set_key,
 	.pa_encrypt =		(algop_crypt_t *)camellia_encrypt,
 	.pa_decrypt =		(algop_crypt_t *)camellia_decrypt,
 };
+
+static __inline void
+pefs_alg_init(struct pefs_alg *pa)
+{
+	if (pa->pa_init != NULL)
+		pa->pa_init(pa);
+}
 
 void
 pefs_crypto_init(void)
@@ -90,6 +113,8 @@ pefs_crypto_init(void)
 	    NULL, NULL, NULL, (uma_fini)bzero, UMA_ALIGN_PTR, 0);
 	pefs_key_zone = uma_zcreate("pefs_key", sizeof(struct pefs_key),
 	    NULL, NULL, NULL, (uma_fini)bzero, UMA_ALIGN_PTR, 0);
+	pefs_alg_init(&pefs_alg_aes);
+	pefs_alg_init(&pefs_alg_camellia);
 }
 
 void
@@ -120,6 +145,20 @@ pefs_ctx_cpy(struct pefs_ctx *dst, struct pefs_ctx *src)
 	*dst = *src;
 }
 
+static __inline void
+pefs_session_enter(const struct pefs_alg *alg, struct pefs_session *ses)
+{
+	if (alg->pa_enter != NULL)
+		alg->pa_enter(ses);
+}
+
+static __inline void
+pefs_session_leave(const struct pefs_alg *alg, struct pefs_session *ses)
+{
+	if (alg->pa_leave != NULL)
+		alg->pa_leave(ses);
+}
+
 /*
  * Use HKDF-Expand() to derive keys, key parameter is supposed to be
  * cryptographically strong.
@@ -128,6 +167,7 @@ pefs_ctx_cpy(struct pefs_ctx *dst, struct pefs_ctx *src)
 static void
 pefs_key_generate(struct pefs_key *pk, const char *masterkey)
 {
+	struct pefs_session ses;
 	struct pefs_ctx *ctx;
 	char key[PEFS_KEY_SIZE];
 	char idx;
@@ -139,6 +179,7 @@ pefs_key_generate(struct pefs_key *pk, const char *masterkey)
 	bzero(pk->pk_tweak_ctx, sizeof(struct pefs_ctx));
 
 	ctx = pefs_ctx_get();
+	pefs_session_enter(pk->pk_alg, &ses);
 
 	idx = 1;
 	bzero(key, PEFS_KEY_SIZE);
@@ -159,6 +200,11 @@ pefs_key_generate(struct pefs_key *pk, const char *masterkey)
 	hmac_sha512_final(&ctx->o.pctx_hmac, key, PEFS_KEY_SIZE);
 	pk->pk_alg->pa_keysetup(pk->pk_tweak_ctx, key, pk->pk_keybits);
 
+	if (pk->pk_alg != &pefs_alg_aes) {
+		pefs_session_leave(pk->pk_alg, &ses);
+		pefs_session_enter(&pefs_alg_aes, &ses);
+	}
+
 	idx = 3;
 	hmac_sha512_init(&ctx->o.pctx_hmac, masterkey, PEFS_KEY_SIZE);
 	hmac_sha512_update(&ctx->o.pctx_hmac, key, PEFS_KEY_SIZE);
@@ -167,6 +213,8 @@ pefs_key_generate(struct pefs_key *pk, const char *masterkey)
 	hmac_sha512_update(&ctx->o.pctx_hmac, &idx, sizeof(idx));
 	hmac_sha512_final(&ctx->o.pctx_hmac, key, PEFS_KEY_SIZE);
 	pefs_alg_aes.pa_keysetup(pk->pk_name_ctx, key, PEFS_NAME_KEY_BITS);
+
+	pefs_session_leave(&pefs_alg_aes, &ses);
 
 	idx = 4;
 	hmac_sha512_init(&ctx->o.pctx_hmac, masterkey, PEFS_KEY_SIZE);
@@ -330,12 +378,14 @@ pefs_key_remove_all(struct pefs_mount *pm)
 void
 pefs_data_encrypt(struct pefs_tkey *ptk, off_t offset, struct pefs_chunk *pc)
 {
+	struct pefs_session ses;
 	char *buf;
 	ssize_t resid, block;
 
 	MPASS(ptk->ptk_key != NULL);
 	MPASS((offset & PEFS_SECTOR_MASK) == 0);
 
+	pefs_session_enter(ptk->ptk_key->pk_alg, &ses);
 	buf = pc->pc_base;
 	resid = pc->pc_size;
 	while (resid > 0) {
@@ -348,11 +398,13 @@ pefs_data_encrypt(struct pefs_tkey *ptk, off_t offset, struct pefs_chunk *pc)
 		buf += block;
 		resid -= block;
 	}
+	pefs_session_leave(ptk->ptk_key->pk_alg, &ses);
 }
 
 void
 pefs_data_decrypt(struct pefs_tkey *ptk, off_t offset, struct pefs_chunk *pc)
 {
+	struct pefs_session ses;
 	ssize_t resid;
 	long *p;
 	char *buf, *end;
@@ -360,6 +412,7 @@ pefs_data_decrypt(struct pefs_tkey *ptk, off_t offset, struct pefs_chunk *pc)
 	MPASS(ptk->ptk_key != NULL);
 	MPASS((offset & PEFS_SECTOR_MASK) == 0);
 
+	pefs_session_enter(ptk->ptk_key->pk_alg, &ses);
 	buf = (char *)pc->pc_base;
 	end = buf + pc->pc_size;
 	while (buf < end) {
@@ -384,6 +437,7 @@ pefs_data_decrypt(struct pefs_tkey *ptk, off_t offset, struct pefs_chunk *pc)
 		buf += resid;
 		offset += resid;
 	}
+	pefs_session_leave(ptk->ptk_key->pk_alg, &ses);
 }
 
 /*
@@ -456,7 +510,9 @@ pefs_name_checksum(struct pefs_ctx *ctx, struct pefs_key *pk, char *csum,
 }
 
 static __inline void
+pefs_name_enccbc(struct pefs_key *pk, u_char *data, ssize_t size)
 {
+	struct pefs_session ses;
 	u_char *prev;
 	int i;
 
@@ -464,6 +520,7 @@ static __inline void
 	data += PEFS_NAME_CSUM_SIZE;
 	MPASS(size > 0 && size % PEFS_NAME_BLOCK_SIZE == 0);
 
+	pefs_session_enter(&pefs_alg_aes, &ses);
 	/* Start with zero iv */
 	while (1) {
 		pefs_alg_aes.pa_encrypt(pk->pk_name_ctx, data, data);
@@ -475,11 +532,13 @@ static __inline void
 		for (i = 0; i < PEFS_NAME_BLOCK_SIZE; i++)
 			data[i] ^= prev[i];
 	}
+	pefs_session_leave(&pefs_alg_aes, &ses);
 }
 
 static __inline void
 pefs_name_deccbc(struct pefs_key *pk, u_char *data, ssize_t size)
 {
+	struct pefs_session ses;
 	u_char tmp[PEFS_NAME_BLOCK_SIZE], iv[PEFS_NAME_BLOCK_SIZE];
 	int i;
 
@@ -487,6 +546,7 @@ pefs_name_deccbc(struct pefs_key *pk, u_char *data, ssize_t size)
 	data += PEFS_NAME_CSUM_SIZE;
 	MPASS(size > 0 && size % PEFS_NAME_BLOCK_SIZE == 0);
 
+	pefs_session_enter(&pefs_alg_aes, &ses);
 	bzero(iv, PEFS_NAME_BLOCK_SIZE);
 	while (size > 0) {
 		memcpy(tmp, data, PEFS_NAME_BLOCK_SIZE);
@@ -497,6 +557,7 @@ pefs_name_deccbc(struct pefs_key *pk, u_char *data, ssize_t size)
 		data += PEFS_NAME_BLOCK_SIZE;
 		size -= PEFS_NAME_BLOCK_SIZE;
 	}
+	pefs_session_leave(&pefs_alg_aes, &ses);
 }
 
 int

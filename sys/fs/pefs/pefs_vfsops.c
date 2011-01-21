@@ -446,3 +446,6 @@ static struct vfsops pefs_vfsops = {
 
 VFS_SET(pefs_vfsops, pefs, VFCF_LOOPBACK);
 MODULE_DEPEND(pefs, crypto, 1, 1, 1);
+#ifdef PEFS_AESNI
+MODULE_DEPEND(pefs, aesni, 1, 1, 1);
+#endif
