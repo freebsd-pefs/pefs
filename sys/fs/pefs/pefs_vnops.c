@@ -1666,7 +1666,13 @@ pefs_symlink(struct vop_symlink_args *ap)
 
 	memcpy(enc_target, target, target_len);
 	pefs_data_encrypt(&enccn.pec_tkey, 0, &pc);
-	pefs_name_ntop(enc_target, target_len, penc_target, penc_target_len);
+	error = pefs_name_ntop(enc_target, target_len, penc_target,
+	    penc_target_len);
+	if (error <= 0) {
+		PEFSDEBUG("pefs_symlink: pefs_name_ntop error=%d\n", error);
+		error = EIO;
+		goto out;
+	}
 
 	pefs_chunk_free(&pc, dpn);
 	enc_target = NULL;
@@ -1679,6 +1685,7 @@ pefs_symlink(struct vop_symlink_args *ap)
 			vput(lvp);
 	}
 
+out:
 	pefs_enccn_free(&enccn);
 	free(penc_target, M_PEFSBUF);
 
@@ -1700,8 +1707,9 @@ pefs_readlink(struct vop_readlink_args *ap)
 	if ((pn->pn_flags & PN_HASKEY) == 0)
 		return (VOP_READLINK(lvp, uio, ap->a_cred));
 
+	MPASS(uio->uio_offset == 0);
 	pefs_chunk_create(&pc, pn, qmin(uio->uio_resid, MAXPATHLEN));
-	puio = pefs_chunk_uio(&pc, uio->uio_offset, uio->uio_rw);
+	puio = pefs_chunk_uio(&pc, 0, uio->uio_rw);
 	error = VOP_READLINK(lvp, puio, ap->a_cred);
 	if (error == 0) {
 		target_len = pc.pc_size - puio->uio_resid;
