@@ -160,17 +160,29 @@ pefs_session_leave(const struct pefs_alg *alg, struct pefs_session *ses)
 }
 
 /*
- * Use HKDF-Expand() to derive keys, key parameter is supposed to be
- * cryptographically strong.
- * http://tools.ietf.org/html/draft-krawczyk-hkdf-00
+ * Use HKDF-Expand() defined in RFC5869 to derive keys,
+ * masterkey parameter should be cryptographically strong.
  */
 static void
-pefs_key_generate(struct pefs_key *pk, const char *masterkey)
+pefs_hkdf_expand(struct pefs_ctx *ctx, const uint8_t *masterkey, uint8_t *key,
+    int idx, const uint8_t *magic, size_t magicsize)
+{
+	uint8_t byte_idx = idx;
+
+	hmac_sha512_init(&ctx->o.pctx_hmac, masterkey, PEFS_KEY_SIZE);
+	hmac_sha512_update(&ctx->o.pctx_hmac, key, PEFS_KEY_SIZE);
+	hmac_sha512_update(&ctx->o.pctx_hmac, magic, magicsize);
+	hmac_sha512_update(&ctx->o.pctx_hmac, &byte_idx, sizeof(byte_idx));
+	hmac_sha512_final(&ctx->o.pctx_hmac, key, PEFS_KEY_SIZE);
+}
+
+static void
+pefs_key_generate(struct pefs_key *pk, const uint8_t *masterkey,
+    const uint8_t *magic, size_t magicsize)
 {
 	struct pefs_session ses;
 	struct pefs_ctx *ctx;
-	char key[PEFS_KEY_SIZE];
-	char idx;
+	uint8_t key[PEFS_KEY_SIZE];
 
 	/* Properly initialize contexts as they are used to compare keys. */
 	bzero(pk->pk_name_ctx, sizeof(struct pefs_ctx));
@@ -181,23 +193,11 @@ pefs_key_generate(struct pefs_key *pk, const char *masterkey)
 	ctx = pefs_ctx_get();
 	pefs_session_enter(pk->pk_alg, &ses);
 
-	idx = 1;
 	bzero(key, PEFS_KEY_SIZE);
-	hmac_sha512_init(&ctx->o.pctx_hmac, masterkey, PEFS_KEY_SIZE);
-	hmac_sha512_update(&ctx->o.pctx_hmac, key, PEFS_KEY_SIZE);
-	hmac_sha512_update(&ctx->o.pctx_hmac, magic_keyinfo,
-	    sizeof(magic_keyinfo));
-	hmac_sha512_update(&ctx->o.pctx_hmac, &idx, sizeof(idx));
-	hmac_sha512_final(&ctx->o.pctx_hmac, key, PEFS_KEY_SIZE);
+	pefs_hkdf_expand(ctx, masterkey, key, 1, magic, magicsize);
 	pk->pk_alg->pa_keysetup(pk->pk_data_ctx, key, pk->pk_keybits);
 
-	idx = 2;
-	hmac_sha512_init(&ctx->o.pctx_hmac, masterkey, PEFS_KEY_SIZE);
-	hmac_sha512_update(&ctx->o.pctx_hmac, key, PEFS_KEY_SIZE);
-	hmac_sha512_update(&ctx->o.pctx_hmac, magic_keyinfo,
-	    sizeof(magic_keyinfo));
-	hmac_sha512_update(&ctx->o.pctx_hmac, &idx, sizeof(idx));
-	hmac_sha512_final(&ctx->o.pctx_hmac, key, PEFS_KEY_SIZE);
+	pefs_hkdf_expand(ctx, masterkey, key, 2, magic, magicsize);
 	pk->pk_alg->pa_keysetup(pk->pk_tweak_ctx, key, pk->pk_keybits);
 
 	if (pk->pk_alg != &pefs_alg_aes) {
@@ -205,24 +205,12 @@ pefs_key_generate(struct pefs_key *pk, const char *masterkey)
 		pefs_session_enter(&pefs_alg_aes, &ses);
 	}
 
-	idx = 3;
-	hmac_sha512_init(&ctx->o.pctx_hmac, masterkey, PEFS_KEY_SIZE);
-	hmac_sha512_update(&ctx->o.pctx_hmac, key, PEFS_KEY_SIZE);
-	hmac_sha512_update(&ctx->o.pctx_hmac, magic_keyinfo,
-	    sizeof(magic_keyinfo));
-	hmac_sha512_update(&ctx->o.pctx_hmac, &idx, sizeof(idx));
-	hmac_sha512_final(&ctx->o.pctx_hmac, key, PEFS_KEY_SIZE);
+	pefs_hkdf_expand(ctx, masterkey, key, 3, magic, magicsize);
 	pefs_alg_aes.pa_keysetup(pk->pk_name_ctx, key, PEFS_NAME_KEY_BITS);
 
 	pefs_session_leave(&pefs_alg_aes, &ses);
 
-	idx = 4;
-	hmac_sha512_init(&ctx->o.pctx_hmac, masterkey, PEFS_KEY_SIZE);
-	hmac_sha512_update(&ctx->o.pctx_hmac, key, PEFS_KEY_SIZE);
-	hmac_sha512_update(&ctx->o.pctx_hmac, magic_keyinfo,
-	    sizeof(magic_keyinfo));
-	hmac_sha512_update(&ctx->o.pctx_hmac, &idx, sizeof(idx));
-	hmac_sha512_final(&ctx->o.pctx_hmac, key, PEFS_KEY_SIZE);
+	pefs_hkdf_expand(ctx, masterkey, key, 4, magic, magicsize);
 	vmac_set_key(key, &pk->pk_name_csum_ctx->o.pctx_vmac);
 
 	bzero(key, PEFS_KEY_SIZE);
@@ -269,7 +257,7 @@ pefs_key_get(int alg, int keybits, const char *key, const char *keyid)
 	pk->pk_data_ctx = pefs_ctx_get();
 	pk->pk_tweak_ctx = pefs_ctx_get();
 
-	pefs_key_generate(pk, key);
+	pefs_key_generate(pk, key, magic_keyinfo, sizeof(magic_keyinfo));
 
 	return (pk);
 }
