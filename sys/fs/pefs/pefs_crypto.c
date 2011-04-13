@@ -80,7 +80,7 @@ struct pefs_session {
 static uma_zone_t		pefs_ctx_zone;
 static uma_zone_t		pefs_key_zone;
 
-static const char		magic_keyinfo[] = "PEFSKEY";
+static const char		magic_keyinfo_v1[] = "PEFSKEY-V1";
 
 static struct pefs_alg pefs_alg_aes = {
 	.pa_id =		PEFS_ALG_AES_XTS,
@@ -257,7 +257,7 @@ pefs_key_get(int alg, int keybits, const char *key, const char *keyid)
 	pk->pk_data_ctx = pefs_ctx_get();
 	pk->pk_tweak_ctx = pefs_ctx_get();
 
-	pefs_key_generate(pk, key, magic_keyinfo, sizeof(magic_keyinfo));
+	pefs_key_generate(pk, key, magic_keyinfo_v1, sizeof(magic_keyinfo_v1));
 
 	return (pk);
 }
