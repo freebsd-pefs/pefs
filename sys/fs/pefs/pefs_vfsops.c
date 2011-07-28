@@ -406,11 +406,11 @@ pefs_vget(struct mount *mp, ino_t ino, int flags, struct vnode **vpp)
 }
 
 static int
-pefs_fhtovp(struct mount *mp, struct fid *fidp, struct vnode **vpp)
+pefs_fhtovp(struct mount *mp, struct fid *fidp, int flags, struct vnode **vpp)
 {
 	int error;
 
-	error = VFS_FHTOVP(VFS_TO_PEFS(mp)->pm_lowervfs, fidp, vpp);
+	error = VFS_FHTOVP(VFS_TO_PEFS(mp)->pm_lowervfs, fidp, LK_EXCLUSIVE, vpp);
 	if (error != 0)
 		return (error);
 
