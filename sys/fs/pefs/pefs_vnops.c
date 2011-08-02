@@ -1801,8 +1801,22 @@ lookupvpg:
 	m = vm_page_lookup(vp->v_object,
 	    OFF_TO_IDX(uio->uio_offset));
 	if (m != NULL && vm_page_is_valid(m, moffset, msize)) {
+#if __FreeBSD_version >= 900038
+		if ((m->oflags & VPO_BUSY) != 0) {
+			/*
+			 * Reference the page before unlocking and
+			 * sleeping so that the page daemon is less
+			 * likely to reclaim it.
+			 */
+			vm_page_lock_queues();
+			vm_page_flag_set(m, PG_REFERENCED);
+			vm_page_sleep(m, "pefsmr");
+			goto lookupvpg;
+		}
+#else
 		if (vm_page_sleep_if_busy(m, FALSE, "pefsmr"))
 			goto lookupvpg;
+#endif
 		vm_page_busy(m);
 		VM_OBJECT_UNLOCK(vp->v_object);
 		PEFSDEBUG("pefs_read: mapped: "
@@ -1819,8 +1833,22 @@ lookupvpg:
 		return (EJUSTRETURN);
 	}
 	if (m != NULL && uio->uio_segflg == UIO_NOCOPY) {
+#if __FreeBSD_version >= 900036
+		if ((m->oflags & VPO_BUSY) != 0) {
+			/*
+			 * Reference the page before unlocking and
+			 * sleeping so that the page daemon is less
+			 * likely to reclaim it.
+			 */
+			vm_page_lock_queues();
+			vm_page_flag_set(m, PG_REFERENCED);
+			vm_page_sleep(m, "pefsmr");
+			goto lookupvpg;
+		}
+#else
 		if (vm_page_sleep_if_busy(m, FALSE, "pefsmr"))
 			goto lookupvpg;
+#endif /* __FreeBSD_version */
 		vm_page_busy(m);
 		*mp = m;
 	}
@@ -1976,14 +2004,29 @@ pefs_writemapped(struct vnode *vp, struct uio *uio,
 lookupvpg:
 	idx = OFF_TO_IDX(uio->uio_offset);
 	m = vm_page_lookup(vp->v_object, idx);
-	if (m != NULL &&
-	    vm_page_is_valid(m, 0, bsize)) {
+	if (m != NULL && vm_page_is_valid(m, 0, bsize)) {
+#if __FreeBSD_version >= 900038
+		if ((m->oflags & VPO_BUSY) != 0) {
+			/*
+			 * Reference the page before unlocking and
+			 * sleeping so that the page daemon is less
+			 * likely to reclaim it.
+			 */
+			vm_page_lock_queues();
+			vm_page_flag_set(m, PG_REFERENCED);
+			vm_page_sleep(m, "pefsmw");
+			goto lookupvpg;
+		}
+		vm_page_busy(m);
+		vm_page_undirty(m);
+#else
 		if (vm_page_sleep_if_busy(m, FALSE, "pefsmw"))
 			goto lookupvpg;
 		vm_page_busy(m);
 		vm_page_lock_queues();
 		vm_page_undirty(m);
 		vm_page_unlock_queues();
+#endif
 		VM_OBJECT_UNLOCK(vp->v_object);
 		PEFSDEBUG("pefs_write: mapped: "
 		    "offset=0x%jx moffset=0x%jx bsize=0x%zx\n",
