@@ -406,11 +406,19 @@ pefs_vget(struct mount *mp, ino_t ino, int flags, struct vnode **vpp)
 }
 
 static int
+#if __FreeBSD_version >= 900038
+pefs_fhtovp(struct mount *mp, struct fid *fidp, int flags, struct vnode **vpp)
+#else
 pefs_fhtovp(struct mount *mp, struct fid *fidp, struct vnode **vpp)
+#endif
 {
 	int error;
 
+#if __FreeBSD_version >= 900038
+	error = VFS_FHTOVP(VFS_TO_PEFS(mp)->pm_lowervfs, fidp, flags, vpp);
+#else
 	error = VFS_FHTOVP(VFS_TO_PEFS(mp)->pm_lowervfs, fidp, vpp);
+#endif /* __FreeBSD_version */
 	if (error != 0)
 		return (error);
 
