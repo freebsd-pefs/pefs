@@ -1808,8 +1808,12 @@ lookupvpg:
 			 * sleeping so that the page daemon is less
 			 * likely to reclaim it.
 			 */
+#if __FreeBSD_version >= 900044
+			vm_page_aflag_set(m, PGA_REFERENCED);
+#else
 			vm_page_lock_queues();
 			vm_page_flag_set(m, PG_REFERENCED);
+#endif
 			vm_page_sleep(m, "pefsmr");
 			goto lookupvpg;
 		}
@@ -1840,8 +1844,12 @@ lookupvpg:
 			 * sleeping so that the page daemon is less
 			 * likely to reclaim it.
 			 */
+#if __FreeBSD_version >= 900044
+			vm_page_aflag_set(m, PGA_REFERENCED);
+#else
 			vm_page_lock_queues();
 			vm_page_flag_set(m, PG_REFERENCED);
+#endif
 			vm_page_sleep(m, "pefsmr");
 			goto lookupvpg;
 		}
@@ -2012,8 +2020,12 @@ lookupvpg:
 			 * sleeping so that the page daemon is less
 			 * likely to reclaim it.
 			 */
+#if __FreeBSD_version >= 900044
+			vm_page_aflag_set(m, PGA_REFERENCED);
+#else
 			vm_page_lock_queues();
 			vm_page_flag_set(m, PG_REFERENCED);
+#endif
 			vm_page_sleep(m, "pefsmw");
 			goto lookupvpg;
 		}
