@@ -1708,7 +1708,7 @@ pefs_readlink(struct vop_readlink_args *ap)
 		return (VOP_READLINK(lvp, uio, ap->a_cred));
 
 	MPASS(uio->uio_offset == 0);
-	pefs_chunk_create(&pc, pn, qmin(uio->uio_resid, MAXPATHLEN));
+	pefs_chunk_create(&pc, pn, MAXPATHLEN);
 	puio = pefs_chunk_uio(&pc, 0, uio->uio_rw);
 	error = VOP_READLINK(lvp, puio, ap->a_cred);
 	if (error == 0) {
