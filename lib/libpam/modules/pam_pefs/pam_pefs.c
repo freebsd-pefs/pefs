@@ -178,10 +178,6 @@ pefs_count(const char *user, const int incr, const int first_mount)
 	return (total);
 }
 
-/*
- * Perform key lookup in ~/.pefs;
- * returns PAM_AUTH_ERR if and only if key wasn't found in database.
- */
 static int
 pam_pefs_getfsroot(const char *homedir)
 {
