@@ -36,12 +36,16 @@
 #include <sys/cdefs.h>
 __FBSDID("$FreeBSD$");
 
-#include <sys/param.h>
+#include <sys/file.h>
 #include <sys/ioctl.h>
+#include <sys/param.h>
 #include <sys/wait.h>
+#include <sys/stat.h>
 
+#include <assert.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <libgen.h>
 #include <paths.h>
 #include <pwd.h>
 #include <signal.h>
@@ -68,6 +72,10 @@ __FBSDID("$FreeBSD$");
 #define	PAM_PEFS_OPT_IGNORE_MISSING	"ignore_missing"
 #define	PAM_PEFS_KEYS			"pam_pefs_keys"
 
+#define PEFS_SESSION_DIR_MODE 0700
+#define PEFS_SESSION_FILE_MODE 0600
+#define PEFS_PATH_NAME "/var/run/pefs/@%s"
+
 static int pam_pefs_debug;
 
 void
@@ -91,6 +99,89 @@ pefs_warn(const char *fmt, ...)
         va_end(ap);
 }
 
+static FILE*
+fopen_retry(const char *filename, const int flags, const char *mode)
+{
+	int fd, try;
+
+	for (try = 0; try <= 1024; try *= 2) {
+		if (flags & O_CREAT)
+			fd = open(filename, flags, PEFS_SESSION_FILE_MODE);
+		else
+			fd = open(filename, flags);
+		if (fd == -1 || errno != EWOULDBLOCK)
+			return (fd == -1 ? NULL : fdopen(fd, mode));
+		// Exponential back-off up to 1 second
+		usleep(try * 1000000 / 1024);
+	}
+	return (NULL);
+}
+
+static int
+pefs_count(const char *user, const int incr, const int first_mount)
+{
+	FILE *fd;
+	struct stat sb;
+	int total = 0;
+	char filename[MAXPATHLEN + 1];
+
+	assert (incr == 1 || incr == -1);
+
+	snprintf(filename, MAXPATHLEN, PEFS_PATH_NAME, user);
+
+	if (stat(dirname(filename), &sb) == -1)
+		mkdir(dirname(filename), PEFS_SESSION_DIR_MODE);
+	else if (!S_ISDIR(sb.st_mode)) {
+		pefs_warn("%s is not a directory", dirname(filename));
+		return (-1);
+	}
+
+	if (stat(filename, &sb) == -1) {
+		/* File does not exist and needs to be created */
+		if ((fd = fopen_retry(filename, O_WRONLY | O_CREAT |
+				O_NONBLOCK | O_EXLOCK, "w")) == NULL) {
+			pefs_warn("unable to create session counter file: %s",
+				  filename);
+			return (-1);
+		}
+		if (!first_mount)
+			pefs_warn("unexpected missing session counter file: %s",
+				  filename);
+	} else {
+		/* File exists and contains previous total */
+		if ((fd = fopen_retry(filename, O_RDWR | O_NONBLOCK | O_EXLOCK,
+				"r+")) == NULL) {
+			pefs_warn("unable to open session counter file: %s",
+				  filename);
+			return (-1);
+		}
+
+		fscanf(fd, "%i", &total);
+		rewind(fd);
+		ftruncate(fileno(fd), 0L);
+
+		if (total ^ first_mount) {
+			if (first_mount)
+				total = 0;
+			pefs_warn("possible stale session counter file: %s",
+				  filename);
+		}
+	}
+
+	total += incr;
+	if (total < 0) {
+		pefs_warn("corrupted session counter file: %s", filename);
+	} else
+		fprintf(fd, "%i", total);
+	fclose(fd);
+
+	return (total);
+}
+
+/*
+ * Perform key lookup in ~/.pefs;
+ * returns PAM_AUTH_ERR if and only if key wasn't found in database.
+ */
 static int
 pam_pefs_getfsroot(const char *homedir)
 {
@@ -252,7 +343,9 @@ pam_sm_open_session(pam_handle_t *pamh, int flags __unused,
 	struct pefs_keychain *kc;
 	struct passwd *pwd;
 	const char *user;
-	int fd, pam_err;
+	int fd, pam_err, good_key = 1;
+
+	pam_pefs_debug = 1;
 
 	pam_err = pam_get_data(pamh, PAM_PEFS_KEYS, (const void **)&kch);
 	if (pam_err != PAM_SUCCESS || kch == NULL || TAILQ_EMPTY(kch))
@@ -282,24 +375,81 @@ pam_sm_open_session(pam_handle_t *pamh, int flags __unused,
 		if (ioctl(fd, PEFS_ADDKEY, &kc->kc_key) == -1) {
 			pefs_warn("cannot add key: %s: %s", pwd->pw_dir,
 			    strerror(errno));
+			good_key = 0;
 			break;
 		}
 	}
 	close(fd);
 
-	/* Remove keys from memmory */
+	/* Remove keys from memory */
 	pefs_keychain_free(kch);
 
 	/* Switch back to arbitrator credentials */
 	openpam_restore_cred(pamh);
 
+	/* Increment login count */
+	pefs_count(user, 1, good_key);
+
 	return (PAM_SUCCESS);
 }
 
 PAM_EXTERN int
-pam_sm_close_session(pam_handle_t *pamh __unused, int flags __unused,
+pam_sm_close_session(pam_handle_t *pamh, int flags __unused,
     int argc __unused, const char *argv[] __unused)
 {
+	struct pefs_xkey k;
+	struct passwd *pwd;
+	const char *user;
+	int fd, pam_err;
+
+	pam_err = pam_get_user(pamh, &user, NULL);
+	if (pam_err != PAM_SUCCESS)
+		return (pam_err);
+
+	pwd = getpwnam(user);
+	if (pwd == NULL)
+		return (PAM_USER_UNKNOWN);
+	if (pwd->pw_dir == NULL)
+		return (PAM_SYSTEM_ERR);
+
+	pam_pefs_debug = (openpam_get_option(pamh, PAM_OPT_DEBUG) != NULL);
+
+	/* Switch to user credentials */
+	pam_err = openpam_borrow_cred(pamh, pwd);
+	if (pam_err != PAM_SUCCESS)
+		return (pam_err);
+
+	if (pefs_getfsroot(pwd->pw_dir, 0, NULL, 0) != 0)
+		return PAM_SYSTEM_ERR;
+
+	/* Switch back to arbitrator credentials */
+	openpam_restore_cred(pamh);
+
+	/* Decrease login count and remove keys if at zero */
+	if (pefs_count(user, -1, 0) == 0) {
+		/* Switch to user credentials */
+		pam_err = openpam_borrow_cred(pamh, pwd);
+		if (pam_err != PAM_SUCCESS)
+			return (pam_err);
+
+		fd = open(pwd->pw_dir, O_RDONLY);
+
+		bzero(&k, sizeof(k));
+		while (1) {
+			if (ioctl(fd, PEFS_GETKEY, &k) == -1)
+				break;
+
+			if (ioctl(fd, PEFS_DELKEY, &k) == -1) {
+				pefs_warn("cannot del key: %s: %s", pwd->pw_dir,
+				strerror(errno));
+				k.pxk_index++;
+			}
+		}
+		close(fd);
+
+		/* Switch back to arbitrator credentials */
+		openpam_restore_cred(pamh);
+	}
 
 	return (PAM_SUCCESS);
 }
