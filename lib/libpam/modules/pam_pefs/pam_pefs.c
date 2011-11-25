@@ -178,16 +178,9 @@ pefs_count(const char *user, const int incr, const int first_mount)
 	return (total);
 }
 
-/*
- * Perform key lookup in ~/.pefs;
- * returns PAM_AUTH_ERR if and only if key wasn't found in database.
- */
 static int
-pam_pefs_getkeys(struct pefs_keychain_head *kch,
-    const char *homedir, const char *passphrase, int chainflags)
+pam_pefs_getfsroot(const char *homedir)
 {
-	struct pefs_xkey k;
-	struct pefs_keyparam kp;
 	char fsroot[MAXPATHLEN];
 	int error;
 
@@ -199,6 +192,21 @@ pam_pefs_getkeys(struct pefs_keychain_head *kch,
 		pefs_warn("file system is not mounted on home dir: %s", fsroot);
 		return (PAM_USER_UNKNOWN);
 	}
+
+	return (PAM_SUCCESS);
+}
+
+/*
+ * Perform key lookup in ~/.pefs;
+ * returns PAM_AUTH_ERR if and only if key wasn't found in database.
+ */
+static int
+pam_pefs_getkeys(struct pefs_keychain_head *kch,
+    const char *homedir, const char *passphrase, int chainflags)
+{
+	struct pefs_xkey k;
+	struct pefs_keyparam kp;
+	int error;
 
 	pefs_keyparam_create(&kp);
 	pefs_keyparam_init(&kp, homedir);
@@ -253,6 +261,22 @@ pam_sm_authenticate(pam_handle_t *pamh, int flags __unused,
 
 	canretry = (pam_get_item(pamh, PAM_AUTHTOK, &item) == PAM_SUCCESS &&
 	    item != NULL && chainflags != PEFS_KEYCHAIN_IGNORE_MISSING);
+
+	/* Switch to user credentials */
+	pam_err = openpam_borrow_cred(pamh, pwd);
+	if (pam_err != PAM_SUCCESS)
+		return (pam_err);
+
+	/*
+	 * Check to see if the passwd db is available, avoids asking for
+	 * password if we cannot even validate it.
+	 */
+	pam_err = pam_pefs_getfsroot(pwd->pw_dir);
+	if (pam_err != PAM_SUCCESS)
+		return (pam_err);
+
+	/* Switch back to arbitrator credentials */
+	openpam_restore_cred(pamh);
 
 retry:
 	/* Get passphrase */
