@@ -240,12 +240,17 @@ pefs_node_lookup_name(struct vnode *lvp, struct vnode *ldvp, struct ucred *cred,
 	VOP_UNLOCK(lvp, 0);
 	nldvp = lvp;
 	error = vn_vptocnp(&nldvp, cred, encname, encname_len);
-	if (error == 0)
+	if (error == 0) {
+#if __FreeBSD_version >= 1000001
+		vrele(nldvp);
+#else
 		vdrop(nldvp);
+#endif
+	}
 	vrele(lvp);
-	vn_lock(lvp, locked | LK_RETRY);
 	if (ldvp && dlocked)
 		vn_lock(ldvp, dlocked | LK_RETRY);
+	vn_lock(lvp, locked | LK_RETRY);
 	if (error != 0)
 		return (ENOENT);
 

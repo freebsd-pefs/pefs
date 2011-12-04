@@ -2293,21 +2293,31 @@ pefs_setkey(struct vnode *vp, struct pefs_key *pk, struct ucred *cred,
 	ldvp = PEFS_LOWERVP(dvp);
 	vn_lock(dvp, LK_EXCLUSIVE | LK_RETRY);
 	vn_lock(vp, LK_EXCLUSIVE | LK_RETRY);
+#if __FreeBSD_version < 1000001
 	vdrop(dvp); /* vhold by vn_vptocnp */
+#endif
 
 	error = VOP_ACCESS(vp, VWRITE, cred, td);
 	if (error == 0)
 		error = pefs_enccn_get(&fenccn, dvp, vp, &cn);
 	if (error != 0) {
 		VOP_UNLOCK(vp, 0);
+#if __FreeBSD_version >= 1000001
+		vput(dvp); /* vref by vn_vptocnp */
+#else
 		VOP_UNLOCK(dvp, 0);
+#endif
 		PEFSDEBUG("pefs_setkey: pefs_enccn_get failed: %d\n", error);
 		goto out;
 	}
 	error = pefs_enccn_create(&tenccn, pk, NULL, &cn);
 	if (error != 0) {
 		VOP_UNLOCK(vp, 0);
+#if __FreeBSD_version >= 1000001
+		vput(dvp); /* vref by vn_vptocnp */
+#else
 		VOP_UNLOCK(dvp, 0);
+#endif
 		pefs_enccn_free(&fenccn);
 		goto out;
 	}
@@ -2321,6 +2331,9 @@ pefs_setkey(struct vnode *vp, struct pefs_key *pk, struct ucred *cred,
 	vref(ldvp);
 	error = VOP_RENAME(ldvp, lvp, &fenccn.pec_cn, ldvp, lvp,
 	    &tenccn.pec_cn);
+#if __FreeBSD_version >= 1000001
+	vrele(dvp); /* vref by vn_vptocnp */
+#endif
 	if (error == 0) {
 		vn_lock(vp, LK_EXCLUSIVE | LK_RETRY);
 		vgone(vp);
