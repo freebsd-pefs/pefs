@@ -339,7 +339,7 @@ pam_sm_open_session(pam_handle_t *pamh, int flags __unused,
 	struct pefs_keychain *kc;
 	struct passwd *pwd;
 	const char *user;
-	int fd, pam_err, good_key = 1;
+	int fd, pam_err, pam_pefs_delkeys, good_key = 1;
 
 	pam_pefs_debug = 1;
 
@@ -357,6 +357,7 @@ pam_sm_open_session(pam_handle_t *pamh, int flags __unused,
 		return (PAM_SYSTEM_ERR);
 
 	pam_pefs_debug = (openpam_get_option(pamh, PAM_OPT_DEBUG) != NULL);
+	pam_pefs_delkeys = (openpam_get_option(pamh, "delkeys") != NULL);
 
 	/* Switch to user credentials */
 	pam_err = openpam_borrow_cred(pamh, pwd);
@@ -384,7 +385,8 @@ pam_sm_open_session(pam_handle_t *pamh, int flags __unused,
 	openpam_restore_cred(pamh);
 
 	/* Increment login count */
-	pefs_count(user, 1, good_key);
+	if (pam_pefs_delkeys)
+		pefs_count(user, 1, good_key);
 
 	return (PAM_SUCCESS);
 }
@@ -396,7 +398,7 @@ pam_sm_close_session(pam_handle_t *pamh, int flags __unused,
 	struct pefs_xkey k;
 	struct passwd *pwd;
 	const char *user;
-	int fd, pam_err;
+	int fd, pam_err, pam_pefs_delkeys;
 
 	pam_err = pam_get_user(pamh, &user, NULL);
 	if (pam_err != PAM_SUCCESS)
@@ -409,6 +411,7 @@ pam_sm_close_session(pam_handle_t *pamh, int flags __unused,
 		return (PAM_SYSTEM_ERR);
 
 	pam_pefs_debug = (openpam_get_option(pamh, PAM_OPT_DEBUG) != NULL);
+	pam_pefs_delkeys = (openpam_get_option(pamh, "delkeys") != NULL);
 
 	/* Switch to user credentials */
 	pam_err = openpam_borrow_cred(pamh, pwd);
@@ -422,7 +425,7 @@ pam_sm_close_session(pam_handle_t *pamh, int flags __unused,
 	openpam_restore_cred(pamh);
 
 	/* Decrease login count and remove keys if at zero */
-	if (pefs_count(user, -1, 0) == 0) {
+	if (pam_pefs_delkeys && pefs_count(user, -1, 0) == 0) {
 		/* Switch to user credentials */
 		pam_err = openpam_borrow_cred(pamh, pwd);
 		if (pam_err != PAM_SUCCESS)
