@@ -109,8 +109,10 @@ fopen_retry(const char *filename, const int flags, const char *mode)
 			fd = open(filename, flags, PEFS_SESSION_FILE_MODE);
 		else
 			fd = open(filename, flags);
-		if (fd == -1 || errno != EWOULDBLOCK)
-			return (fd == -1 ? NULL : fdopen(fd, mode));
+		if (fd > 0)
+			return fdopen(fd, mode);
+		else if (!(errno == EWOULDBLOCK || errno == EAGAIN))
+			return NULL;
 		// Exponential back-off up to 1 second
 		usleep(try * 1000000 / 1024);
 	}
