@@ -140,8 +140,8 @@ pefs_count(const char *user, const int incr, const int first_mount)
 		/* File does not exist and needs to be created */
 		if ((fd = fopen_retry(filename, O_WRONLY | O_CREAT |
 				O_NONBLOCK | O_EXLOCK, "w")) == NULL) {
-			pefs_warn("unable to create session counter file: %s",
-				  filename);
+			pefs_warn("unable to create session counter file %s: %s",
+				  filename, strerror(errno));
 			return (-1);
 		}
 		if (!first_mount)
@@ -151,8 +151,8 @@ pefs_count(const char *user, const int incr, const int first_mount)
 		/* File exists and contains previous total */
 		if ((fd = fopen_retry(filename, O_RDWR | O_NONBLOCK | O_EXLOCK,
 				"r+")) == NULL) {
-			pefs_warn("unable to open session counter file: %s",
-				  filename);
+			pefs_warn("unable to open session counter file %s: %s",
+				  filename, strerror(errno));
 			return (-1);
 		}
 
@@ -160,14 +160,15 @@ pefs_count(const char *user, const int incr, const int first_mount)
 		rewind(fd);
 		ftruncate(fileno(fd), 0L);
 
-		if (total ^ first_mount) {
+		if ((total == 0) ^ first_mount) {
 			if (first_mount)
 				total = 0;
-			pefs_warn("possible stale session counter file: %s",
-				  filename);
+			pefs_warn("stale session counter file: %s", filename);
 		}
 	}
 
+	pefs_warn("%s: session count %i%s%i", user, total, incr > 0 ? "+" : "",
+		  incr);
 	total += incr;
 	if (total < 0) {
 		pefs_warn("corrupted session counter file: %s", filename);
