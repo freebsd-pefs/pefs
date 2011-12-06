@@ -36,9 +36,8 @@
 #include <sys/cdefs.h>
 __FBSDID("$FreeBSD$");
 
-#include <sys/file.h>
-#include <sys/ioctl.h>
 #include <sys/param.h>
+#include <sys/ioctl.h>
 #include <sys/wait.h>
 #include <sys/stat.h>
 
@@ -50,6 +49,7 @@ __FBSDID("$FreeBSD$");
 #include <pwd.h>
 #include <signal.h>
 #include <stdarg.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -72,9 +72,11 @@ __FBSDID("$FreeBSD$");
 #define	PAM_PEFS_OPT_IGNORE_MISSING	"ignore_missing"
 #define	PAM_PEFS_KEYS			"pam_pefs_keys"
 
-#define PEFS_SESSION_DIR_MODE 0700
-#define PEFS_SESSION_FILE_MODE 0600
-#define PEFS_PATH_NAME "/var/run/pefs/@%s"
+#define PEFS_OPT_DELKEYS		"delkeys"
+
+#define PEFS_SESSION_DIR 		"/var/run/pefs"
+#define PEFS_SESSION_DIR_MODE		0700
+#define PEFS_SESSION_FILE_MODE		0600
 
 static int pam_pefs_debug;
 
@@ -104,7 +106,7 @@ fopen_retry(const char *filename, const int flags, const char *mode)
 {
 	int fd, try;
 
-	for (try = 0; try <= 1024; try *= 2) {
+	for (try = 1; try <= 1024; try *= 2) {
 		if (flags & O_CREAT)
 			fd = open(filename, flags, PEFS_SESSION_FILE_MODE);
 		else
@@ -120,19 +122,22 @@ fopen_retry(const char *filename, const int flags, const char *mode)
 }
 
 static int
-pefs_count(const char *user, const int incr, const int first_mount)
+pefs_session_count_incr(const char *user, const bool incr,
+			const bool first_mount)
 {
 	FILE *fd;
 	struct stat sb;
 	int total = 0;
 	char filename[MAXPATHLEN + 1];
 
-	assert (incr == 1 || incr == -1);
+	snprintf(filename, MAXPATHLEN, "%s/%s", PEFS_SESSION_DIR, user);
 
-	snprintf(filename, MAXPATHLEN, PEFS_PATH_NAME, user);
-
-	if (stat(dirname(filename), &sb) == -1)
-		mkdir(dirname(filename), PEFS_SESSION_DIR_MODE);
+	if (stat(PEFS_SESSION_DIR, &sb) == -1)
+		if (mkdir(PEFS_SESSION_DIR, PEFS_SESSION_DIR_MODE)) {
+			pefs_warn("unable to create session directory %s: %s",
+				  PEFS_SESSION_DIR, strerror(errno));
+			return -1;
+		}
 	else if (!S_ISDIR(sb.st_mode)) {
 		pefs_warn("%s is not a directory", dirname(filename));
 		return (-1);
@@ -170,8 +175,8 @@ pefs_count(const char *user, const int incr, const int first_mount)
 	}
 
 	pefs_warn("%s: session count %i%s%i", user, total, incr > 0 ? "+" : "",
-		  incr);
-	total += incr;
+		  (incr ? 1 : -1));
+	total += incr ? 1 : -1;
 	if (total < 0) {
 		pefs_warn("corrupted session counter file: %s", filename);
 	} else
@@ -342,7 +347,8 @@ pam_sm_open_session(pam_handle_t *pamh, int flags __unused,
 	struct pefs_keychain *kc;
 	struct passwd *pwd;
 	const char *user;
-	int fd, pam_err, pam_pefs_delkeys, good_key = 1;
+	int fd, pam_err, pam_pefs_delkeys;
+	bool good_key = true;
 
 	pam_pefs_debug = 1;
 
@@ -360,7 +366,7 @@ pam_sm_open_session(pam_handle_t *pamh, int flags __unused,
 		return (PAM_SYSTEM_ERR);
 
 	pam_pefs_debug = (openpam_get_option(pamh, PAM_OPT_DEBUG) != NULL);
-	pam_pefs_delkeys = (openpam_get_option(pamh, "delkeys") != NULL);
+	pam_pefs_delkeys = (openpam_get_option(pamh, PEFS_OPT_DELKEYS) != NULL);
 
 	/* Switch to user credentials */
 	pam_err = openpam_borrow_cred(pamh, pwd);
@@ -375,7 +381,7 @@ pam_sm_open_session(pam_handle_t *pamh, int flags __unused,
 		if (ioctl(fd, PEFS_ADDKEY, &kc->kc_key) == -1) {
 			pefs_warn("cannot add key: %s: %s", pwd->pw_dir,
 			    strerror(errno));
-			good_key = 0;
+			good_key = false;
 			break;
 		}
 	}
@@ -389,7 +395,7 @@ pam_sm_open_session(pam_handle_t *pamh, int flags __unused,
 
 	/* Increment login count */
 	if (pam_pefs_delkeys)
-		pefs_count(user, 1, good_key);
+		pefs_session_count_incr(user, true, good_key);
 
 	return (PAM_SUCCESS);
 }
@@ -414,7 +420,7 @@ pam_sm_close_session(pam_handle_t *pamh, int flags __unused,
 		return (PAM_SYSTEM_ERR);
 
 	pam_pefs_debug = (openpam_get_option(pamh, PAM_OPT_DEBUG) != NULL);
-	pam_pefs_delkeys = (openpam_get_option(pamh, "delkeys") != NULL);
+	pam_pefs_delkeys = (openpam_get_option(pamh, PEFS_OPT_DELKEYS) != NULL);
 
 	/* Switch to user credentials */
 	pam_err = openpam_borrow_cred(pamh, pwd);
@@ -428,7 +434,7 @@ pam_sm_close_session(pam_handle_t *pamh, int flags __unused,
 	openpam_restore_cred(pamh);
 
 	/* Decrease login count and remove keys if at zero */
-	if (pam_pefs_delkeys && pefs_count(user, -1, 0) == 0) {
+	if (pam_pefs_delkeys && pefs_session_count_incr(user, false, false) == 0) {
 		/* Switch to user credentials */
 		pam_err = openpam_borrow_cred(pamh, pwd);
 		if (pam_err != PAM_SUCCESS)
@@ -443,7 +449,7 @@ pam_sm_close_session(pam_handle_t *pamh, int flags __unused,
 
 			if (ioctl(fd, PEFS_DELKEY, &k) == -1) {
 				pefs_warn("cannot del key: %s: %s", pwd->pw_dir,
-				strerror(errno));
+					  strerror(errno));
 				k.pxk_index++;
 			}
 		}
