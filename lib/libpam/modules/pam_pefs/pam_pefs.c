@@ -45,6 +45,7 @@ __FBSDID("$FreeBSD$");
 #include <errno.h>
 #include <fcntl.h>
 #include <libgen.h>
+#include <libutil.h>
 #include <paths.h>
 #include <pwd.h>
 #include <signal.h>
@@ -77,6 +78,7 @@ __FBSDID("$FreeBSD$");
 #define PEFS_SESSION_DIR 		"/var/run/pefs"
 #define PEFS_SESSION_DIR_MODE		0700
 #define PEFS_SESSION_FILE_MODE		0600
+#define PEFS_SESSION_FILE_FLAGS		O_RDWR | O_NONBLOCK | O_CREAT | O_EXLOCK
 
 static int pam_pefs_debug;
 
@@ -101,77 +103,66 @@ pefs_warn(const char *fmt, ...)
         va_end(ap);
 }
 
-static FILE*
-fopen_retry(const char *filename, const int flags, const char *mode)
+static int
+flopen_retry(const char *filename)
 {
 	int fd, try;
 
 	for (try = 1; try <= 1024; try *= 2) {
-		if (flags & O_CREAT)
-			fd = open(filename, flags, PEFS_SESSION_FILE_MODE);
-		else
-			fd = open(filename, flags);
+		fd = flopen(filename, PEFS_SESSION_FILE_FLAGS, PEFS_SESSION_FILE_MODE);
 		if (fd > 0)
-			return fdopen(fd, mode);
+			return fd;
 		else if (!(errno == EWOULDBLOCK || errno == EAGAIN))
-			return NULL;
+			return -1;
 		// Exponential back-off up to 1 second
 		usleep(try * 1000000 / 1024);
 	}
-	return (NULL);
+	return -1;
 }
 
 static int
 pefs_session_count_incr(const char *user, const bool incr,
 			const bool first_mount)
 {
-	FILE *fd;
 	struct stat sb;
-	int total = 0;
-	char filename[MAXPATHLEN + 1];
+	ssize_t offset;
+	int fd, total = 0;
+	char filename[MAXPATHLEN + 1], buf[16];
 
-	snprintf(filename, MAXPATHLEN, "%s/%s", PEFS_SESSION_DIR, user);
+	snprintf(filename, MAXPATHLEN + 1, "%s/%s", PEFS_SESSION_DIR, user);
 
-	if (stat(PEFS_SESSION_DIR, &sb) == -1)
+	if (lstat(PEFS_SESSION_DIR, &sb) == -1) {
 		if (mkdir(PEFS_SESSION_DIR, PEFS_SESSION_DIR_MODE)) {
 			pefs_warn("unable to create session directory %s: %s",
 				  PEFS_SESSION_DIR, strerror(errno));
 			return -1;
 		}
-	else if (!S_ISDIR(sb.st_mode)) {
+	} else if (!S_ISDIR(sb.st_mode)) {
 		pefs_warn("%s is not a directory", dirname(filename));
 		return (-1);
 	}
 
-	if (stat(filename, &sb) == -1) {
-		/* File does not exist and needs to be created */
-		if ((fd = fopen_retry(filename, O_WRONLY | O_CREAT |
-				O_NONBLOCK | O_EXLOCK, "w")) == NULL) {
-			pefs_warn("unable to create session counter file %s: %s",
-				  filename, strerror(errno));
-			return (-1);
-		}
-		if (!first_mount)
-			pefs_warn("unexpected missing session counter file: %s",
-				  filename);
-	} else {
-		/* File exists and contains previous total */
-		if ((fd = fopen_retry(filename, O_RDWR | O_NONBLOCK | O_EXLOCK,
-				"r+")) == NULL) {
-			pefs_warn("unable to open session counter file %s: %s",
-				  filename, strerror(errno));
-			return (-1);
-		}
+	if ((fd = flopen_retry(filename)) == -1) {
+		pefs_warn("unable to create session counter file %s: %s",
+			  filename, strerror(errno));
+	}
 
-		fscanf(fd, "%i", &total);
-		rewind(fd);
-		ftruncate(fileno(fd), 0L);
+	if ((offset = pread(fd, buf, sizeof(buf) - 1, 0)) == -1) {
+		pefs_warn("unable to read from the session counter file %s: %s",
+			  filename, strerror(errno));
+		close(fd);
+		return (-1);
+	}
+	buf[offset] = '\0';
+	total = (int)strtol(buf, NULL, 10);
 
-		if ((total == 0) ^ first_mount) {
-			if (first_mount)
-				total = 0;
-			pefs_warn("stale session counter file: %s", filename);
-		}
+	lseek(fd, 0L, SEEK_SET);
+	ftruncate(fd, 0L);
+
+	if ((total > 0 && first_mount) || (total == 0 && !first_mount)) {
+		if (first_mount)
+			total = 0;
+		pefs_warn("stale session counter file: %s", filename);
 	}
 
 	pefs_warn("%s: session count %i%s%i", user, total, incr > 0 ? "+" : "",
@@ -179,9 +170,11 @@ pefs_session_count_incr(const char *user, const bool incr,
 	total += incr ? 1 : -1;
 	if (total < 0) {
 		pefs_warn("corrupted session counter file: %s", filename);
-	} else
-		fprintf(fd, "%i", total);
-	fclose(fd);
+	} else {
+		offset = snprintf(buf, sizeof(buf), "%i", total);
+		pwrite(fd, buf, offset, 0);
+	}
+	close(fd);
 
 	return (total);
 }
