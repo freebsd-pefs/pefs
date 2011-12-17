@@ -179,9 +179,8 @@ pefs_session_count_incr(const char *user, const bool incr)
 	lseek(fd, 0L, SEEK_SET);
 	ftruncate(fd, 0L);
 
-	pefs_warn("%s: session count %i%s%i", user, total, incr > 0 ? "+" : "",
-		  (incr ? 1 : -1));
 	total += incr ? 1 : -1;
+	pefs_warn("%s: session count %s%i%i", user, incr > 0 ? "+" : "", total);
 	if (total < 0) {
 		pefs_warn("corrupted session counter file: %s", filename);
 		total = 0;
@@ -359,7 +358,7 @@ pam_sm_open_session(pam_handle_t *pamh, int flags __unused,
 	pam_pefs_debug = 1;
 
 	pam_err = pam_get_data(pamh, PAM_PEFS_KEYS, (const void **)&kch);
-	if (pam_err != PAM_SUCCESS || kch == NULL || TAILQ_EMPTY(kch))
+	if (pam_err != PAM_SUCCESS)
 		return (PAM_SUCCESS);
 
 	pam_err = pam_get_user(pamh, &user, NULL);
@@ -382,18 +381,20 @@ pam_sm_open_session(pam_handle_t *pamh, int flags __unused,
 	if (pefs_getfsroot(pwd->pw_dir, 0, NULL, 0) != 0)
 		return PAM_SYSTEM_ERR;
 
-	fd = open(pwd->pw_dir, O_RDONLY);
-	TAILQ_FOREACH(kc, kch, kc_entry) {
-		if (ioctl(fd, PEFS_ADDKEY, &kc->kc_key) == -1) {
-			pefs_warn("cannot add key: %s: %s", pwd->pw_dir,
-			    strerror(errno));
-			break;
+	if (!(kch == NULL || TAILQ_EMPTY(kch))) {
+		fd = open(pwd->pw_dir, O_RDONLY);
+		TAILQ_FOREACH(kc, kch, kc_entry) {
+			if (ioctl(fd, PEFS_ADDKEY, &kc->kc_key) == -1) {
+				pefs_warn("cannot add key: %s: %s", pwd->pw_dir,
+				strerror(errno));
+				break;
+			}
 		}
-	}
-	close(fd);
+		close(fd);
 
-	/* Remove keys from memory */
-	pefs_keychain_free(kch);
+		/* Remove keys from memory */
+		pefs_keychain_free(kch);
+	}
 
 	/* Switch back to arbitrator credentials */
 	openpam_restore_cred(pamh);
