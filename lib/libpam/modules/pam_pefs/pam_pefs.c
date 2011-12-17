@@ -121,10 +121,10 @@ flopen_retry(const char *filename)
 }
 
 static int
-pefs_session_count_incr(const char *user, const bool incr,
-			const bool first_mount)
+pefs_session_count_incr(const char *user, const bool incr)
 {
 	struct stat sb;
+	struct timespec tp_uptime, tp_now;
 	ssize_t offset;
 	int fd, total = 0;
 	char filename[MAXPATHLEN + 1], buf[16];
@@ -135,7 +135,7 @@ pefs_session_count_incr(const char *user, const bool incr,
 		if (mkdir(PEFS_SESSION_DIR, PEFS_SESSION_DIR_MODE)) {
 			pefs_warn("unable to create session directory %s: %s",
 				  PEFS_SESSION_DIR, strerror(errno));
-			return -1;
+			return (-1);
 		}
 	} else if (!S_ISDIR(sb.st_mode)) {
 		pefs_warn("%s is not a directory", dirname(filename));
@@ -145,6 +145,7 @@ pefs_session_count_incr(const char *user, const bool incr,
 	if ((fd = flopen_retry(filename)) == -1) {
 		pefs_warn("unable to create session counter file %s: %s",
 			  filename, strerror(errno));
+		return (-1);
 	}
 
 	if ((offset = pread(fd, buf, sizeof(buf) - 1, 0)) == -1) {
@@ -156,24 +157,37 @@ pefs_session_count_incr(const char *user, const bool incr,
 	buf[offset] = '\0';
 	total = (int)strtol(buf, NULL, 10);
 
+	/*
+	 * Determine if this is the first increment of the session file.
+	 *
+	 * It is considered the first increment if the session file has not
+	 * been modified since the last boot time.
+	 */
+	if (incr) {
+		bzero(&sb, sizeof(sb));
+		fstat(fd, &sb);
+		clock_gettime(CLOCK_REALTIME_FAST, &tp_now);
+		clock_gettime(CLOCK_UPTIME_FAST, &tp_uptime);
+		if (sb.st_mtime <= tp_now.tv_sec - tp_uptime.tv_sec)
+			if (total > 0) {
+				pefs_warn("stale session counter file: %s",
+					  filename);
+				total = 0;
+			}
+	}
+
 	lseek(fd, 0L, SEEK_SET);
 	ftruncate(fd, 0L);
-
-	if ((total > 0 && first_mount) || (total == 0 && !first_mount)) {
-		if (first_mount)
-			total = 0;
-		pefs_warn("stale session counter file: %s", filename);
-	}
 
 	pefs_warn("%s: session count %i%s%i", user, total, incr > 0 ? "+" : "",
 		  (incr ? 1 : -1));
 	total += incr ? 1 : -1;
 	if (total < 0) {
 		pefs_warn("corrupted session counter file: %s", filename);
-	} else {
-		offset = snprintf(buf, sizeof(buf), "%i", total);
-		pwrite(fd, buf, offset, 0);
+		total = 0;
 	}
+	offset = snprintf(buf, sizeof(buf), "%i", total);
+	pwrite(fd, buf, offset, 0);
 	close(fd);
 
 	return (total);
@@ -341,7 +355,6 @@ pam_sm_open_session(pam_handle_t *pamh, int flags __unused,
 	struct passwd *pwd;
 	const char *user;
 	int fd, pam_err, pam_pefs_delkeys;
-	bool good_key = true;
 
 	pam_pefs_debug = 1;
 
@@ -374,7 +387,6 @@ pam_sm_open_session(pam_handle_t *pamh, int flags __unused,
 		if (ioctl(fd, PEFS_ADDKEY, &kc->kc_key) == -1) {
 			pefs_warn("cannot add key: %s: %s", pwd->pw_dir,
 			    strerror(errno));
-			good_key = false;
 			break;
 		}
 	}
@@ -388,7 +400,7 @@ pam_sm_open_session(pam_handle_t *pamh, int flags __unused,
 
 	/* Increment login count */
 	if (pam_pefs_delkeys)
-		pefs_session_count_incr(user, true, good_key);
+		pefs_session_count_incr(user, true);
 
 	return (PAM_SUCCESS);
 }
@@ -427,7 +439,7 @@ pam_sm_close_session(pam_handle_t *pamh, int flags __unused,
 	openpam_restore_cred(pamh);
 
 	/* Decrease login count and remove keys if at zero */
-	if (pam_pefs_delkeys && pefs_session_count_incr(user, false, false) == 0) {
+	if (pam_pefs_delkeys && pefs_session_count_incr(user, false) == 0) {
 		/* Switch to user credentials */
 		pam_err = openpam_borrow_cred(pamh, pwd);
 		if (pam_err != PAM_SUCCESS)
