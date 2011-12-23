@@ -14,8 +14,8 @@ SRCS+=	rijndael-api.c rijndael-api-fst.c rijndael-alg-fst.c
 CFLAGS+= -I${PEFSDIR}
 CFLAGS+= -I${SYS}
 
-DEBUG=-g
-STRIP=
+DPADD= ${LIBUTIL}
+LDADD= -lutil
 
 .include <bsd.lib.mk>
 

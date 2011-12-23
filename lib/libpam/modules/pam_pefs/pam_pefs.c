@@ -41,7 +41,6 @@ __FBSDID("$FreeBSD$");
 #include <sys/wait.h>
 #include <sys/stat.h>
 
-#include <assert.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <libgen.h>
@@ -70,15 +69,16 @@ __FBSDID("$FreeBSD$");
 #include "pefs_ctl.h"
 #include "pefs_keychain.h"
 
-#define	PAM_PEFS_OPT_IGNORE_MISSING	"ignore_missing"
+#define	PEFS_OPT_IGNORE_MISSING		"ignore_missing"
+#define	PEFS_OPT_DELKEYS		"delkeys"
+
 #define	PAM_PEFS_KEYS			"pam_pefs_keys"
 
-#define PEFS_OPT_DELKEYS		"delkeys"
-
-#define PEFS_SESSION_DIR 		"/var/run/pefs"
-#define PEFS_SESSION_DIR_MODE		0700
-#define PEFS_SESSION_FILE_MODE		0600
-#define PEFS_SESSION_FILE_FLAGS		O_RDWR | O_NONBLOCK | O_CREAT | O_EXLOCK
+#define	PEFS_SESSION_DIR		"/var/run/pefs"
+#define	PEFS_SESSION_DIR_MODE		0700
+#define	PEFS_SESSION_FILE_MODE		0600
+#define	PEFS_SESSION_FILE_FLAGS		\
+	(O_RDWR | O_NONBLOCK | O_CREAT | O_EXLOCK)
 
 static int pam_pefs_debug;
 
@@ -109,53 +109,66 @@ flopen_retry(const char *filename)
 	int fd, try;
 
 	for (try = 1; try <= 1024; try *= 2) {
-		fd = flopen(filename, PEFS_SESSION_FILE_FLAGS, PEFS_SESSION_FILE_MODE);
-		if (fd > 0)
-			return fd;
-		else if (!(errno == EWOULDBLOCK || errno == EAGAIN))
-			return -1;
+		fd = flopen(filename, PEFS_SESSION_FILE_FLAGS,
+		    PEFS_SESSION_FILE_MODE);
+		if (fd != -1)
+			return (fd);
+		else if (errno != EWOULDBLOCK)
+			return (-1);
 		// Exponential back-off up to 1 second
 		usleep(try * 1000000 / 1024);
 	}
-	return -1;
+	errno = ETIMEDOUT;
+	return (-1);
 }
 
 static int
-pefs_session_count_incr(const char *user, const bool incr)
+pefs_session_count_incr(const char *user, bool incr)
 {
 	struct stat sb;
 	struct timespec tp_uptime, tp_now;
 	ssize_t offset;
 	int fd, total = 0;
-	char filename[MAXPATHLEN + 1], buf[16];
+	char filename[MAXPATHLEN], buf[16];
+	const char *errstr;
 
-	snprintf(filename, MAXPATHLEN + 1, "%s/%s", PEFS_SESSION_DIR, user);
+	snprintf(filename, sizeof(filename), "%s/%s", PEFS_SESSION_DIR, user);
 
 	if (lstat(PEFS_SESSION_DIR, &sb) == -1) {
-		if (mkdir(PEFS_SESSION_DIR, PEFS_SESSION_DIR_MODE)) {
+		if (errno != ENOENT) {
+			pefs_warn("unable to access session directory %s: %s",
+			    PEFS_SESSION_DIR, strerror(errno));
+			return (-1);
+		}
+		if (mkdir(PEFS_SESSION_DIR, PEFS_SESSION_DIR_MODE) == -1) {
 			pefs_warn("unable to create session directory %s: %s",
-				  PEFS_SESSION_DIR, strerror(errno));
+			    PEFS_SESSION_DIR, strerror(errno));
 			return (-1);
 		}
 	} else if (!S_ISDIR(sb.st_mode)) {
-		pefs_warn("%s is not a directory", dirname(filename));
+		pefs_warn("%s is not a directory", PEFS_SESSION_DIR);
 		return (-1);
 	}
 
 	if ((fd = flopen_retry(filename)) == -1) {
 		pefs_warn("unable to create session counter file %s: %s",
-			  filename, strerror(errno));
+		    filename, strerror(errno));
 		return (-1);
 	}
 
 	if ((offset = pread(fd, buf, sizeof(buf) - 1, 0)) == -1) {
 		pefs_warn("unable to read from the session counter file %s: %s",
-			  filename, strerror(errno));
+		    filename, strerror(errno));
 		close(fd);
 		return (-1);
 	}
 	buf[offset] = '\0';
-	total = (int)strtol(buf, NULL, 10);
+	if (offset != 0) {
+		total = strtonum(buf, 0, INT_MAX, &errstr);
+		if (errstr != NULL)
+			pefs_warn("corrupted session counter file: %s: %s",
+			    filename, errstr);
+	}
 
 	/*
 	 * Determine if this is the first increment of the session file.
@@ -163,30 +176,40 @@ pefs_session_count_incr(const char *user, const bool incr)
 	 * It is considered the first increment if the session file has not
 	 * been modified since the last boot time.
 	 */
-	if (incr) {
-		bzero(&sb, sizeof(sb));
-		fstat(fd, &sb);
+	if (incr && total > 0) {
+		if (fstat(fd, &sb) == -1) {
+			pefs_warn("unable to access session counter file %s: %s",
+			    filename, strerror(errno));
+			close(fd);
+			return (-1);
+		}
+		/*
+		 * Check is messy and will fail if wall clock isn't monotonical
+		 * (e.g. because of ntp, DST, leap seconds)
+		 */
 		clock_gettime(CLOCK_REALTIME_FAST, &tp_now);
 		clock_gettime(CLOCK_UPTIME_FAST, &tp_uptime);
-		if (sb.st_mtime <= tp_now.tv_sec - tp_uptime.tv_sec)
-			if (total > 0) {
-				pefs_warn("stale session counter file: %s",
-					  filename);
-				total = 0;
-			}
+		if (sb.st_mtime < tp_now.tv_sec - tp_uptime.tv_sec) {
+			pefs_warn("stale session counter file: %s",
+			    filename);
+			total = 0;
+		}
 	}
 
 	lseek(fd, 0L, SEEK_SET);
 	ftruncate(fd, 0L);
 
 	total += incr ? 1 : -1;
-	pefs_warn("%s: session count %s%i%i", user, incr > 0 ? "+" : "", total);
 	if (total < 0) {
-		pefs_warn("corrupted session counter file: %s", filename);
+		pefs_warn("corrupted session counter file: %s",
+		    filename);
 		total = 0;
-	}
-	offset = snprintf(buf, sizeof(buf), "%i", total);
-	pwrite(fd, buf, offset, 0);
+	} else
+		pefs_warn("%s: session count %d", user, total);
+
+	buf[0] = '\0';
+	snprintf(buf, sizeof(buf), "%d", total);
+	pwrite(fd, buf, strlen(buf), 0);
 	close(fd);
 
 	return (total);
@@ -270,7 +293,7 @@ pam_sm_authenticate(pam_handle_t *pamh, int flags __unused,
 	pam_pefs_debug = (openpam_get_option(pamh, PAM_OPT_DEBUG) != NULL);
 
 	chainflags = PEFS_KEYCHAIN_USE;
-	if (openpam_get_option(pamh, PAM_PEFS_OPT_IGNORE_MISSING) != NULL)
+	if (openpam_get_option(pamh, PEFS_OPT_IGNORE_MISSING) != NULL)
 		chainflags = PEFS_KEYCHAIN_IGNORE_MISSING;
 
 	canretry = (pam_get_item(pamh, PAM_AUTHTOK, &item) == PAM_SUCCESS &&
@@ -355,11 +378,9 @@ pam_sm_open_session(pam_handle_t *pamh, int flags __unused,
 	const char *user;
 	int fd, pam_err, pam_pefs_delkeys;
 
-	pam_pefs_debug = 1;
-
 	pam_err = pam_get_data(pamh, PAM_PEFS_KEYS, (const void **)&kch);
 	if (pam_err != PAM_SUCCESS)
-		return (PAM_SUCCESS);
+		kch = NULL;
 
 	pam_err = pam_get_user(pamh, &user, NULL);
 	if (pam_err != PAM_SUCCESS)
@@ -381,12 +402,12 @@ pam_sm_open_session(pam_handle_t *pamh, int flags __unused,
 	if (pefs_getfsroot(pwd->pw_dir, 0, NULL, 0) != 0)
 		return PAM_SYSTEM_ERR;
 
-	if (!(kch == NULL || TAILQ_EMPTY(kch))) {
+	if (kch != NULL && !TAILQ_EMPTY(kch)) {
 		fd = open(pwd->pw_dir, O_RDONLY);
 		TAILQ_FOREACH(kc, kch, kc_entry) {
 			if (ioctl(fd, PEFS_ADDKEY, &kc->kc_key) == -1) {
-				pefs_warn("cannot add key: %s: %s", pwd->pw_dir,
-				strerror(errno));
+				pefs_warn("cannot add key: %s: %s",
+				    pwd->pw_dir, strerror(errno));
 				break;
 			}
 		}
@@ -455,7 +476,7 @@ pam_sm_close_session(pam_handle_t *pamh, int flags __unused,
 
 			if (ioctl(fd, PEFS_DELKEY, &k) == -1) {
 				pefs_warn("cannot del key: %s: %s", pwd->pw_dir,
-					  strerror(errno));
+				    strerror(errno));
 				k.pxk_index++;
 			}
 		}
