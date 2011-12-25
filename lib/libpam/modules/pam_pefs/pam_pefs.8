@@ -105,6 +105,10 @@ Option is incompatible with
 option and should be used with
 .Cm use_first_pass
 option.
+.It Cm delkeys
+Remove keys at the end of last session.
+Module tracks the number of concurrent sessions, removing all keys from
+file system when session count reaches zero.
 .El
 .Ss Pefs Session Management Module
 The
