@@ -216,7 +216,7 @@ pefs_session_count_incr(const char *user, bool incr)
 }
 
 static int
-pam_pefs_getfsroot(const char *homedir)
+pam_pefs_checkfs(const char *homedir)
 {
 	char fsroot[MAXPATHLEN];
 	int error;
@@ -261,6 +261,60 @@ pam_pefs_getkeys(struct pefs_keychain_head *kch,
 	return (PAM_SUCCESS);
 }
 
+static int
+pam_pefs_addkeys(const char *homedir, struct pefs_keychain_head *kch)
+{
+	struct pefs_keychain *kc;
+	int fd;
+
+	fd = open(homedir, O_RDONLY);
+	if (fd == -1) {
+		pefs_warn("cannot open homedir %s: %s",
+		    homedir, strerror(errno));
+		return (PAM_USER_UNKNOWN);
+	}
+
+	TAILQ_FOREACH(kc, kch, kc_entry) {
+		if (ioctl(fd, PEFS_ADDKEY, &kc->kc_key) == -1) {
+			pefs_warn("cannot add key: %s: %s",
+			    homedir, strerror(errno));
+			break;
+		}
+	}
+	close(fd);
+
+	return (PAM_SUCCESS);
+}
+
+static int
+pam_pefs_delkeys(const char *homedir)
+{
+	struct pefs_xkey k;
+	int fd;
+
+	fd = open(homedir, O_RDONLY);
+	if (fd == -1) {
+		pefs_warn("cannot open homedir %s: %s",
+		    homedir, strerror(errno));
+		return (PAM_USER_UNKNOWN);
+	}
+
+	bzero(&k, sizeof(k));
+	while (1) {
+		if (ioctl(fd, PEFS_GETKEY, &k) == -1)
+			break;
+
+		if (ioctl(fd, PEFS_DELKEY, &k) == -1) {
+			pefs_warn("cannot del key: %s: %s",
+			    homedir, strerror(errno));
+			k.pxk_index++;
+		}
+	}
+	close(fd);
+
+	return (PAM_SUCCESS);
+}
+
 static void
 pam_pefs_freekeys(pam_handle_t *pamh __unused, void *data, int pam_err __unused)
 {
@@ -299,7 +353,6 @@ pam_sm_authenticate(pam_handle_t *pamh, int flags __unused,
 	canretry = (pam_get_item(pamh, PAM_AUTHTOK, &item) == PAM_SUCCESS &&
 	    item != NULL && chainflags != PEFS_KEYCHAIN_IGNORE_MISSING);
 
-	/* Switch to user credentials */
 	pam_err = openpam_borrow_cred(pamh, pwd);
 	if (pam_err != PAM_SUCCESS)
 		return (pam_err);
@@ -308,12 +361,11 @@ pam_sm_authenticate(pam_handle_t *pamh, int flags __unused,
 	 * Check to see if the passwd db is available, avoids asking for
 	 * password if we cannot even validate it.
 	 */
-	pam_err = pam_pefs_getfsroot(pwd->pw_dir);
+	pam_err = pam_pefs_checkfs(pwd->pw_dir);
+	openpam_restore_cred(pamh);
 	if (pam_err != PAM_SUCCESS)
 		return (pam_err);
 
-	/* Switch back to arbitrator credentials */
-	openpam_restore_cred(pamh);
 
 retry:
 	/* Get passphrase */
@@ -372,15 +424,10 @@ PAM_EXTERN int
 pam_sm_open_session(pam_handle_t *pamh, int flags __unused,
     int argc __unused, const char *argv[] __unused)
 {
-	struct pefs_keychain_head *kch;
-	struct pefs_keychain *kc;
+	struct pefs_keychain_head *kch = NULL;
 	struct passwd *pwd;
 	const char *user;
-	int fd, pam_err, pam_pefs_delkeys;
-
-	pam_err = pam_get_data(pamh, PAM_PEFS_KEYS, (const void **)&kch);
-	if (pam_err != PAM_SUCCESS)
-		kch = NULL;
+	int pam_err, opt_delkeys;
 
 	pam_err = pam_get_user(pamh, &user, NULL);
 	if (pam_err != PAM_SUCCESS)
@@ -392,49 +439,52 @@ pam_sm_open_session(pam_handle_t *pamh, int flags __unused,
 		return (PAM_SYSTEM_ERR);
 
 	pam_pefs_debug = (openpam_get_option(pamh, PAM_OPT_DEBUG) != NULL);
-	pam_pefs_delkeys = (openpam_get_option(pamh, PEFS_OPT_DELKEYS) != NULL);
+	opt_delkeys = (openpam_get_option(pamh, PEFS_OPT_DELKEYS) != NULL);
+
+	pam_err = pam_get_data(pamh, PAM_PEFS_KEYS, (const void **)&kch);
+	if (pam_err != PAM_SUCCESS || kch == NULL || TAILQ_EMPTY(kch)) {
+		pam_err = PAM_SUCCESS;
+		opt_delkeys = 0;
+		goto out;
+	}
 
 	/* Switch to user credentials */
 	pam_err = openpam_borrow_cred(pamh, pwd);
 	if (pam_err != PAM_SUCCESS)
-		return (pam_err);
+		goto out;
 
-	if (pefs_getfsroot(pwd->pw_dir, 0, NULL, 0) != 0)
-		return PAM_SYSTEM_ERR;
-
-	if (kch != NULL && !TAILQ_EMPTY(kch)) {
-		fd = open(pwd->pw_dir, O_RDONLY);
-		TAILQ_FOREACH(kc, kch, kc_entry) {
-			if (ioctl(fd, PEFS_ADDKEY, &kc->kc_key) == -1) {
-				pefs_warn("cannot add key: %s: %s",
-				    pwd->pw_dir, strerror(errno));
-				break;
-			}
-		}
-		close(fd);
-
-		/* Remove keys from memory */
-		pefs_keychain_free(kch);
+	pam_err = pam_pefs_checkfs(pwd->pw_dir);
+	if (pam_err != PAM_SUCCESS) {
+		openpam_restore_cred(pamh);
+		pam_err = PAM_SUCCESS;
+		opt_delkeys = 0;
+		goto out;
 	}
+
+	pam_err = pam_pefs_addkeys(pwd->pw_dir, kch);
 
 	/* Switch back to arbitrator credentials */
 	openpam_restore_cred(pamh);
 
+out:
+	/* Remove keys from memory */
+	if (kch != NULL)
+		pefs_keychain_free(kch);
+
 	/* Increment login count */
-	if (pam_pefs_delkeys)
+	if (pam_err == PAM_SUCCESS && opt_delkeys)
 		pefs_session_count_incr(user, true);
 
-	return (PAM_SUCCESS);
+	return (pam_err);
 }
 
 PAM_EXTERN int
 pam_sm_close_session(pam_handle_t *pamh, int flags __unused,
     int argc __unused, const char *argv[] __unused)
 {
-	struct pefs_xkey k;
 	struct passwd *pwd;
 	const char *user;
-	int fd, pam_err, pam_pefs_delkeys;
+	int pam_err, opt_delkeys;
 
 	pam_err = pam_get_user(pamh, &user, NULL);
 	if (pam_err != PAM_SUCCESS)
@@ -447,46 +497,29 @@ pam_sm_close_session(pam_handle_t *pamh, int flags __unused,
 		return (PAM_SYSTEM_ERR);
 
 	pam_pefs_debug = (openpam_get_option(pamh, PAM_OPT_DEBUG) != NULL);
-	pam_pefs_delkeys = (openpam_get_option(pamh, PEFS_OPT_DELKEYS) != NULL);
+	opt_delkeys = (openpam_get_option(pamh, PEFS_OPT_DELKEYS) != NULL);
+	if (!opt_delkeys)
+		return PAM_SUCCESS;
 
-	/* Switch to user credentials */
 	pam_err = openpam_borrow_cred(pamh, pwd);
 	if (pam_err != PAM_SUCCESS)
 		return (pam_err);
-
-	if (pefs_getfsroot(pwd->pw_dir, 0, NULL, 0) != 0)
-		return PAM_SYSTEM_ERR;
-
-	/* Switch back to arbitrator credentials */
+	pam_err = pam_pefs_checkfs(pwd->pw_dir);
 	openpam_restore_cred(pamh);
+	if (pam_err != PAM_SUCCESS)
+		return (PAM_SUCCESS);
 
 	/* Decrease login count and remove keys if at zero */
-	if (pam_pefs_delkeys && pefs_session_count_incr(user, false) == 0) {
-		/* Switch to user credentials */
+	pam_err = PAM_SUCCESS;
+	if (pefs_session_count_incr(user, false) == 0) {
 		pam_err = openpam_borrow_cred(pamh, pwd);
 		if (pam_err != PAM_SUCCESS)
 			return (pam_err);
-
-		fd = open(pwd->pw_dir, O_RDONLY);
-
-		bzero(&k, sizeof(k));
-		while (1) {
-			if (ioctl(fd, PEFS_GETKEY, &k) == -1)
-				break;
-
-			if (ioctl(fd, PEFS_DELKEY, &k) == -1) {
-				pefs_warn("cannot del key: %s: %s", pwd->pw_dir,
-				    strerror(errno));
-				k.pxk_index++;
-			}
-		}
-		close(fd);
-
-		/* Switch back to arbitrator credentials */
+		pam_err = pam_pefs_delkeys(pwd->pw_dir);
 		openpam_restore_cred(pamh);
 	}
 
-	return (PAM_SUCCESS);
+	return (pam_err);
 }
 
 PAM_MODULE_ENTRY("pam_pefs");
