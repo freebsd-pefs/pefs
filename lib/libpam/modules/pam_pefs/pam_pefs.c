@@ -441,7 +441,8 @@ pam_sm_open_session(pam_handle_t *pamh, int flags __unused,
 	pam_pefs_debug = (openpam_get_option(pamh, PAM_OPT_DEBUG) != NULL);
 	opt_delkeys = (openpam_get_option(pamh, PEFS_OPT_DELKEYS) != NULL);
 
-	pam_err = pam_get_data(pamh, PAM_PEFS_KEYS, (const void **)&kch);
+	pam_err = pam_get_data(pamh, PAM_PEFS_KEYS,
+	    (const void **)(void *)&kch);
 	if (pam_err != PAM_SUCCESS || kch == NULL || TAILQ_EMPTY(kch)) {
 		pam_err = PAM_SUCCESS;
 		opt_delkeys = 0;
