@@ -32,12 +32,12 @@ struct pefs_aesni_ctx {
 	uint8_t enc_schedule[AES_SCHED_LEN] __aligned(16);
 	uint8_t dec_schedule[AES_SCHED_LEN] __aligned(16);
 	int			rounds;
+	rijndael_ctx		sw;
 };
 
 struct pefs_aesni_ses {
+	struct fpu_kern_ctx	*fpu_ctx;
 	struct thread		*td;
-	struct fpu_kern_ctx	fpu_ctx;
+	u_int			fpu_cpuid;
 	int			fpu_saved;
 };
-
-algop_init_t	pefs_aesni_init;

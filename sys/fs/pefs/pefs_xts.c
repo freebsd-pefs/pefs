@@ -78,17 +78,19 @@ gf_mul128(uint64_t *dst, const uint64_t *src)
 }
 
 static __inline void
-xts_fullblock(algop_crypt_t *data_crypt, const struct pefs_ctx *data_ctx,
+xts_fullblock(algop_crypt_t *data_crypt, const struct pefs_session *ses,
+    const struct pefs_ctx *data_ctx,
     uint64_t *tweak, const uint8_t *src, uint8_t *dst)
 {
 	xor128(dst, src, tweak);
-	data_crypt(data_ctx, dst, dst);
+	data_crypt(ses, data_ctx, dst, dst);
 	xor128(dst, dst, tweak);
 	gf_mul128(tweak, tweak);
 }
 
 static __inline void
-xts_lastblock(algop_crypt_t *data_crypt, const struct pefs_ctx *data_ctx,
+xts_lastblock(algop_crypt_t *data_crypt, const struct pefs_session *ses,
+    const struct pefs_ctx *data_ctx,
     uint64_t *tweak, const uint8_t *src, uint8_t *dst, int len)
 {
 	uint8_t b[XTS_BLK_BYTES];
@@ -99,12 +101,13 @@ xts_lastblock(algop_crypt_t *data_crypt, const struct pefs_ctx *data_ctx,
 	memcpy(dst + XTS_BLK_BYTES, dst, len);
 
 	xor128(dst, b, tweak);
-	data_crypt(data_ctx, dst, dst);
+	data_crypt(ses, data_ctx, dst, dst);
 	xor128(dst, dst, tweak);
 }
 
 static __inline void
-xts_smallblock(const struct pefs_alg *alg, const struct pefs_ctx *data_ctx,
+xts_smallblock(const struct pefs_alg *alg, const struct pefs_session *ses,
+    const struct pefs_ctx *data_ctx,
     uint64_t *tweak, const uint8_t *src, uint8_t *dst, int len)
 {
 	uint8_t buf[XTS_BLK_BYTES], *p;
@@ -118,51 +121,54 @@ xts_smallblock(const struct pefs_alg *alg, const struct pefs_ctx *data_ctx,
 	 */
 	memset(buf, len, XTS_BLK_BYTES);
 	xor128(buf, buf, tweak);
-	alg->pa_encrypt(data_ctx, buf, buf);
+	alg->pa_encrypt(ses, data_ctx, buf, buf);
 	for (p = buf; len > 0; len--)
 		*(dst++) = *(src++) ^ *(p++);
 }
 
 static __inline void
-xts_start(const struct pefs_alg *alg, const struct pefs_ctx *tweak_ctx,
+xts_start(const struct pefs_alg *alg, const struct pefs_session *ses,
+    const struct pefs_ctx *tweak_ctx,
     uint64_t *tweak, uint64_t sector, const uint8_t *xtweak)
 {
 	tweak[0] = htole64(sector);
 	tweak[1] = *((const uint64_t *)xtweak);
 
 	/* encrypt the tweak */
-	alg->pa_encrypt(tweak_ctx, (uint8_t *)tweak, (uint8_t *)tweak);
+	alg->pa_encrypt(ses, tweak_ctx, (uint8_t *)tweak, (uint8_t *)tweak);
 }
 
 void
 pefs_xts_block_encrypt(const struct pefs_alg *alg,
+    const struct pefs_session *ses,
     const struct pefs_ctx *tweak_ctx, const struct pefs_ctx *data_ctx,
     uint64_t sector, const uint8_t *xtweak, int len,
     const uint8_t *src, uint8_t *dst)
 {
 	uint64_t tweak[XTS_BLK_BYTES / 8];
 
-	xts_start(alg, tweak_ctx, tweak, sector, xtweak);
+	xts_start(alg, ses, tweak_ctx, tweak, sector, xtweak);
 
 	if (len < XTS_BLK_BYTES) {
-		xts_smallblock(alg, data_ctx, tweak, src, dst, len);
+		xts_smallblock(alg, ses, data_ctx, tweak, src, dst, len);
 		return;
 	}
 
 	while (len >= XTS_BLK_BYTES) {
-		xts_fullblock(alg->pa_encrypt, data_ctx, tweak, src, dst);
+		xts_fullblock(alg->pa_encrypt, ses, data_ctx, tweak, src, dst);
 		dst += XTS_BLK_BYTES;
 		src += XTS_BLK_BYTES;
 		len -= XTS_BLK_BYTES;
 	}
 
 	if (len != 0)
-		xts_lastblock(alg->pa_encrypt, data_ctx, tweak,
+		xts_lastblock(alg->pa_encrypt, ses, data_ctx, tweak,
 		    src, dst, len);
 }
 
 void
 pefs_xts_block_decrypt(const struct pefs_alg *alg,
+    const struct pefs_session *ses,
     const struct pefs_ctx *tweak_ctx, const struct pefs_ctx *data_ctx,
     uint64_t sector, const uint8_t *xtweak, int len,
     const uint8_t *src, uint8_t *dst)
@@ -170,10 +176,10 @@ pefs_xts_block_decrypt(const struct pefs_alg *alg,
 	uint64_t tweak[XTS_BLK_BYTES / 8];
 	uint64_t prevtweak[XTS_BLK_BYTES / 8];
 
-	xts_start(alg, tweak_ctx, tweak, sector, xtweak);
+	xts_start(alg, ses, tweak_ctx, tweak, sector, xtweak);
 
 	if (len < XTS_BLK_BYTES) {
-		xts_smallblock(alg, data_ctx, tweak, src, dst, len);
+		xts_smallblock(alg, ses, data_ctx, tweak, src, dst, len);
 		return;
 	}
 
@@ -181,7 +187,7 @@ pefs_xts_block_decrypt(const struct pefs_alg *alg,
 		len -= XTS_BLK_BYTES;
 
 	while (len >= XTS_BLK_BYTES) {
-		xts_fullblock(alg->pa_decrypt, data_ctx, tweak, src, dst);
+		xts_fullblock(alg->pa_decrypt, ses, data_ctx, tweak, src, dst);
 		dst += XTS_BLK_BYTES;
 		src += XTS_BLK_BYTES;
 		len -= XTS_BLK_BYTES;
@@ -192,11 +198,11 @@ pefs_xts_block_decrypt(const struct pefs_alg *alg,
 		prevtweak[0] = tweak[0];
 		prevtweak[1] = tweak[1];
 		gf_mul128(tweak, tweak);
-		xts_fullblock(alg->pa_decrypt, data_ctx, tweak, src, dst);
+		xts_fullblock(alg->pa_decrypt, ses, data_ctx, tweak, src, dst);
 		dst += XTS_BLK_BYTES;
 		src += XTS_BLK_BYTES;
 		len -= XTS_BLK_BYTES;
-		xts_lastblock(alg->pa_decrypt, data_ctx, prevtweak,
+		xts_lastblock(alg->pa_decrypt, ses, data_ctx, prevtweak,
 		    src, dst, len);
 	}
 }
