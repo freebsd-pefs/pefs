@@ -476,7 +476,7 @@ pefs_name_pad(char *name, size_t size, size_t maxsize)
 	return (psize);
 }
 
-static __inline void
+static void
 pefs_name_checksum(struct pefs_ctx *ctx, struct pefs_key *pk, char *csum,
     char *name, size_t size)
 {
@@ -512,7 +512,19 @@ pefs_name_checksum(struct pefs_ctx *ctx, struct pefs_key *pk, char *csum,
 	memcpy(csum, &csum_int, PEFS_NAME_CSUM_SIZE);
 }
 
-static __inline void
+static __inline int
+pefs_name_checksum_eq(const uint8_t *mac1, const uint8_t *mac2)
+{
+	int i, result;
+
+	result = 0;
+	for (i = 0; i < PEFS_NAME_CSUM_SIZE; i++)
+		result |= *(mac1++) ^ *(mac2++);
+
+	return (result == 0);
+}
+
+static void
 pefs_name_enccbc(struct pefs_key *pk, u_char *data, ssize_t size)
 {
 	struct pefs_session ses;
@@ -538,7 +550,7 @@ pefs_name_enccbc(struct pefs_key *pk, u_char *data, ssize_t size)
 	pefs_session_leave(&pefs_alg_aes, &ses);
 }
 
-static __inline void
+static void
 pefs_name_deccbc(struct pefs_key *pk, u_char *data, ssize_t size)
 {
 	struct pefs_session ses;
@@ -655,7 +667,7 @@ pefs_name_decrypt(struct pefs_ctx *ctx, struct pefs_key *pk,
 	ki_rev = 0;
 	do {
 		pefs_name_checksum(ctx, ki, csum, plain, r);
-		if (memcmp(csum, plain, PEFS_NAME_CSUM_SIZE) == 0)
+		if (pefs_name_checksum_eq(csum, plain))
 			break;
 
 		if (ki_rev == 0) {
