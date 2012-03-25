@@ -2476,6 +2476,11 @@ pefs_pathconf(struct vop_pathconf_args *ap)
 	struct vnode *vp = ap->a_vp;
 	int error, v;
 
+	switch (ap->a_name) {
+	case _PC_MIN_HOLE_SIZE:
+		return (EINVAL);
+	}
+
 	error = VOP_PATHCONF(PEFS_LOWERVP(vp), ap->a_name, ap->a_retval);
 	if (error != 0)
 		return (error);
