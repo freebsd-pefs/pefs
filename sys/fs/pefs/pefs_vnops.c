@@ -1215,7 +1215,6 @@ static int
 pefs_inactive(struct vop_inactive_args *ap)
 {
 	struct vnode *vp = ap->a_vp;
-	struct thread *td = ap->a_td;
 	struct pefs_node *pn = VP_TO_PN(vp);
 
 	/*
@@ -1236,7 +1235,11 @@ pefs_inactive(struct vop_inactive_args *ap)
 	}
 
 	if ((pn->pn_flags & PN_WANTRECYCLE) || (pn->pn_flags & PN_HASKEY) == 0)
-		vrecycle(vp, td);
+#if __FreeBSD_version >= 1000011
+		vrecycle(vp);
+#else
+		vrecycle(vp, ap->a_td);
+#endif
 
 	return (0);
 }
