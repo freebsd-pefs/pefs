@@ -14,8 +14,6 @@ SRCS+=	sha2.c
 MAN=	pefs.8
 
 CFLAGS+=-I${SYS}
-WARNS?=	6
-DEBUG_FLAGS+= -g
 
 DPADD=  ${LIBUTIL}
 LDADD=  -lutil

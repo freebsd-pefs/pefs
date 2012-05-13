@@ -13,10 +13,6 @@ SRCS+=	pefs_aesni.c
 CFLAGS+= -DPEFS_AESNI
 .endif
 
-DEBUG_FLAGS+= -g
-#DEBUG_FLAGS+= -DPEFS_DEBUG
-#DEBUG_FLAGS+= -DPEFS_DEBUG_EXTRA
-
 CFLAGS+= -I${.CURDIR}/../../
 
 # Temporally build crypto/hmac into pefs module
@@ -25,4 +21,3 @@ CFLAGS+= -I${.CURDIR}/../../
 SRCS+=	hmac_sha512.c
 
 .include <bsd.kmod.mk>
-
