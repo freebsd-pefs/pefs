@@ -8,8 +8,10 @@ LIB=	pam_pefs
 MAN=	pam_pefs.8
 SRCS=	pam_pefs.c
 SRCS+=	pefs_key.c pefs_keychain.c pefs_subr.c
-SRCS+=	hmac_sha512.c pkcs5v2.c sha2.c
+SRCS+=	hmac_sha512.c
+SRCS+=	pkcs5v2.c
 SRCS+=	rijndael-api.c rijndael-api-fst.c rijndael-alg-fst.c
+SRCS+=	sha2.c
 
 CFLAGS+= -I${PEFSDIR}
 CFLAGS+= -I${SYS}
@@ -20,5 +22,5 @@ LDADD= -lutil
 .include <bsd.lib.mk>
 
 .PATH: ${PEFSDIR}
-.PATH: ${SYS}/geom/eli
-.PATH: ${SYS}/crypto/hmac ${SYS}/crypto/sha2 ${SYS}/crypto/rijndael
+.PATH: ${SYS}/crypto/hmac ${SYS}/crypto/pkcs5v2 ${SYS}/crypto/rijndael
+.PATH: ${SYS}/crypto/sha2

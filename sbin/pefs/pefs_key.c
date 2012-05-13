@@ -40,9 +40,9 @@ __FBSDID("$FreeBSD$");
 #include <fcntl.h>
 
 #include <crypto/hmac/hmac_sha512.h>
+#include <crypto/pkcs5v2/pkcs5v2.h>
 #include <crypto/rijndael/rijndael.h>
 #include <fs/pefs/pefs.h>
-#include <geom/eli/pkcs5v2.h>
 
 #include "pefs_ctl.h"
 

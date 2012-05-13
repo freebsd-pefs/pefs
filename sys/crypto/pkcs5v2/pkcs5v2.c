@@ -39,7 +39,7 @@ __FBSDID("$FreeBSD$");
 #endif
 
 #include <crypto/hmac/hmac_sha512.h>
-#include <geom/eli/pkcs5v2.h>
+#include <crypto/pkcs5v2/pkcs5v2.h>
 
 #define SHA512_MDLEN		SHA512_DIGEST_LENGTH
 
@@ -52,7 +52,7 @@ xor(uint8_t *dst, const uint8_t *src, size_t size)
 }
 
 void
-pkcs5v2_genkey(uint8_t *key, unsigned keylen, const uint8_t *salt,
+pkcs5v2_genkey(uint8_t *key, size_t keylen, const uint8_t *salt,
     size_t saltsize, const char *passphrase, u_int iterations)
 {
 	uint8_t md[SHA512_MDLEN], saltcount[saltsize + sizeof(uint32_t)];
@@ -84,3 +84,43 @@ pkcs5v2_genkey(uint8_t *key, unsigned keylen, const uint8_t *salt,
 		}
 	}
 }
+
+#if 0 && !defined(_KERNEL)
+/*
+ * Return the number of microseconds needed for 'interations' iterations.
+ */
+static int
+pkcs5v2_probe(int iterations, size_t keylen, size_t saltlen)
+{
+	uint8_t	key[keylen], salt[saltlen];
+	uint8_t passphrase[] = "passphrase";
+	struct rusage start, end;
+	int usecs;
+
+	getrusage(RUSAGE_SELF, &start);
+	pkcs5v2_genkey(key, keylen, salt, saltlen, passphrase,
+	    iterations);
+	getrusage(RUSAGE_SELF, &end);
+
+	usecs = end.ru_utime.tv_sec - start.ru_utime.tv_sec;
+	usecs *= 1000000;
+	usecs += end.ru_utime.tv_usec - start.ru_utime.tv_usec;
+	return (usecs);
+}
+
+/*
+ * Return the number of iterations which takes 'usecs' microseconds.
+ */
+int
+pkcs5v2_calculate(int usecs, size_t keylen, size_t saltlen)
+{
+	int iterations, v;
+
+	for (iterations = 1; ; iterations <<= 1) {
+		v = pkcs5v2_probe(iterations, keylen, saltlen);
+		if (v > 2000000)
+			break;
+	}
+	return (((intmax_t)iterations * (intmax_t)usecs) / v);
+}
+#endif	/* !_KERNEL */
