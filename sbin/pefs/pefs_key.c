@@ -1,6 +1,6 @@
 /*-
  * Copyright (c) 2004-2008 Pawel Jakub Dawidek <pjd@FreeBSD.org>
- * Copyright (c) 2009 Gleb Kurtsou
+ * Copyright (c) 2009 Gleb Kurtsou <gleb@FreeBSD.org>
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without

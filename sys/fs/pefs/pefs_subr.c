@@ -1,6 +1,6 @@
 /*-
  * Copyright (c) 1992, 1993 The Regents of the University of California.
- * Copyright (c) 2009 Gleb Kurtsou
+ * Copyright (c) 2009 Gleb Kurtsou <gleb@FreeBSD.org>
  * All rights reserved.
  *
  * This code is derived from software donated to Berkeley by
