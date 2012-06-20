@@ -28,9 +28,9 @@
 
 #ifndef _PKCS5V2_H_
 #define	_PKCS5V2_H_
-void pkcs5v2_genkey(uint8_t *key, size_t keylen, const uint8_t *salt,
+void pkcs5v2_genkey(uint8_t *key, unsigned keylen, const uint8_t *salt,
     size_t saltsize, const char *passphrase, u_int iterations);
-#if 0 && !defined(_KERNEL)
+#ifndef _KERNEL
 int pkcs5v2_calculate(int usecs, size_t keylen, size_t saltlen);
 #endif
 #endif	/* !_PKCS5V2_H_ */

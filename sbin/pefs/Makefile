@@ -6,7 +6,7 @@ SYS=	${.CURDIR}/../../sys
 
 PROG=	pefs
 SRCS=	pefs_ctl.c pefs_key.c pefs_keychain.c pefs_subr.c
-SRCS+=	hmac_sha512.c
+SRCS+=	hmac.c
 SRCS+=	pkcs5v2.c
 SRCS+=	rijndael-api.c rijndael-api-fst.c rijndael-alg-fst.c
 SRCS+=	sha2.c

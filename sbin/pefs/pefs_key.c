@@ -39,9 +39,10 @@ __FBSDID("$FreeBSD$");
 #include <unistd.h>
 #include <fcntl.h>
 
-#include <crypto/hmac/hmac_sha512.h>
+#include <crypto/hmac/hmac.h>
 #include <crypto/pkcs5v2/pkcs5v2.h>
 #include <crypto/rijndael/rijndael.h>
+#include <opencrypto/cryptodev.h>
 #include <fs/pefs/pefs.h>
 
 #include "pefs_ctl.h"
@@ -240,7 +241,7 @@ int
 pefs_key_generate(struct pefs_xkey *xk, const char *passphrase,
     struct pefs_keyparam *kp)
 {
-	struct hmac_sha512_ctx ctx;
+	struct hmac_ctx ctx;
 	char buf[BUFSIZ];
 	ssize_t done;
 	int fd;
@@ -255,7 +256,7 @@ pefs_key_generate(struct pefs_xkey *xk, const char *passphrase,
 	xk->pxk_alg = kp->kp_alg;
 	xk->pxk_keybits = kp->kp_keybits;
 
-	hmac_sha512_init(&ctx, NULL, 0);
+	hmac_init(&ctx, CRYPTO_SHA2_512_HMAC, NULL, 0);
 
 	if (kp->kp_keyfile != NULL && kp->kp_keyfile[0] == '\0')
 		kp->kp_keyfile = NULL;
@@ -275,7 +276,7 @@ pefs_key_generate(struct pefs_xkey *xk, const char *passphrase,
 			}
 		}
 		while ((done = read(fd, buf, sizeof(buf))) > 0)
-			hmac_sha512_update(&ctx, buf, done);
+			hmac_update(&ctx, buf, done);
 		bzero(buf, sizeof(buf));
 		if (done == -1) {
 			pefs_warn("cannot read keyfile %s: %s",
@@ -289,21 +290,21 @@ pefs_key_generate(struct pefs_xkey *xk, const char *passphrase,
 
 	if (kp->kp_nopassphrase == 0) {
 		if (kp->kp_iterations == 0) {
-			hmac_sha512_update(&ctx, passphrase,
+			hmac_update(&ctx, passphrase,
 			    strlen(passphrase));
 		} else {
 			pkcs5v2_genkey(xk->pxk_key, PEFS_KEY_SIZE,
 			    passphrase, 0, passphrase,
 			    kp->kp_iterations);
-			hmac_sha512_update(&ctx, xk->pxk_key,
+			hmac_update(&ctx, xk->pxk_key,
 			    PEFS_KEY_SIZE);
 		}
 	}
-	hmac_sha512_final(&ctx, xk->pxk_key, PEFS_KEY_SIZE);
+	hmac_final(&ctx, xk->pxk_key, PEFS_KEY_SIZE);
 
-	hmac_sha512_init(&ctx, xk->pxk_key, PEFS_KEY_SIZE);
-	hmac_sha512_update(&ctx, magic_keyid_info, sizeof(magic_keyid_info));
-	hmac_sha512_final(&ctx, xk->pxk_keyid, PEFS_KEYID_SIZE);
+	hmac_init(&ctx, CRYPTO_SHA2_512_HMAC, xk->pxk_key, PEFS_KEY_SIZE);
+	hmac_update(&ctx, magic_keyid_info, sizeof(magic_keyid_info));
+	hmac_final(&ctx, xk->pxk_keyid, PEFS_KEYID_SIZE);
 
 	bzero(&ctx, sizeof(ctx));
 
@@ -314,7 +315,7 @@ static int
 pefs_key_cipher(struct pefs_xkeyenc *xe, int enc,
     const struct pefs_xkey *xk_parent)
 {
-	struct hmac_sha512_ctx hmac_ctx;
+	struct hmac_ctx hmac_ctx;
 	rijndael_ctx enc_ctx;
 	uint8_t key[PEFS_KEY_SIZE];
 	uint8_t mac[PEFS_KEYENC_MAC_SIZE];
@@ -323,16 +324,17 @@ pefs_key_cipher(struct pefs_xkeyenc *xe, int enc,
 	const int keysize = 128 / 8;
 
 	bzero(key, PEFS_KEY_SIZE);
-	hmac_sha512_init(&hmac_ctx, xk_parent->pxk_key, PEFS_KEY_SIZE);
-	hmac_sha512_update(&hmac_ctx, magic_enckey_info,
+	hmac_init(&hmac_ctx, CRYPTO_SHA2_512_HMAC, xk_parent->pxk_key,
+	    PEFS_KEY_SIZE);
+	hmac_update(&hmac_ctx, magic_enckey_info,
 	    sizeof(magic_enckey_info));
-	hmac_sha512_final(&hmac_ctx, key, PEFS_KEY_SIZE);
+	hmac_final(&hmac_ctx, key, PEFS_KEY_SIZE);
 
-	hmac_sha512_init(&hmac_ctx, key, PEFS_KEY_SIZE);
+	hmac_init(&hmac_ctx, CRYPTO_SHA2_512_HMAC, key, PEFS_KEY_SIZE);
 
 	if (!enc) {
-		hmac_sha512_update(&hmac_ctx, data, datasize);
-		hmac_sha512_final(&hmac_ctx, mac, PEFS_KEYENC_MAC_SIZE);
+		hmac_update(&hmac_ctx, data, datasize);
+		hmac_final(&hmac_ctx, mac, PEFS_KEYENC_MAC_SIZE);
 		bzero(&hmac_ctx, sizeof(hmac_ctx));
 		if (memcmp(mac, xe->ke_mac, PEFS_KEYENC_MAC_SIZE) != 0)
 			return (PEFS_ERR_INVALID);
@@ -344,8 +346,8 @@ pefs_key_cipher(struct pefs_xkeyenc *xe, int enc,
 	bzero(&enc_ctx, sizeof(enc_ctx));
 
 	if (enc) {
-		hmac_sha512_update(&hmac_ctx, data, datasize);
-		hmac_sha512_final(&hmac_ctx, xe->ke_mac,
+		hmac_update(&hmac_ctx, data, datasize);
+		hmac_final(&hmac_ctx, xe->ke_mac,
 		    PEFS_KEYENC_MAC_SIZE);
 		bzero(&hmac_ctx, sizeof(hmac_ctx));
 	}

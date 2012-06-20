@@ -18,6 +18,6 @@ CFLAGS+= -I${.CURDIR}/../../
 # Temporally build crypto/hmac into pefs module
 .PATH:	${.CURDIR}/../../crypto/hmac
 
-SRCS+=	hmac_sha512.c
+SRCS+=	hmac.c
 
 .include <bsd.kmod.mk>

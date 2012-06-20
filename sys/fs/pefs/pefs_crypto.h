@@ -27,7 +27,7 @@
  */
 
 #include <crypto/camellia/camellia.h>
-#include <crypto/hmac/hmac_sha512.h>
+#include <crypto/hmac/hmac.h>
 #include <crypto/rijndael/rijndael.h>
 
 #include <fs/pefs/pefs_aesni.h>
@@ -60,7 +60,7 @@ struct pefs_ctx {
 	union {
 		camellia_ctx	pctx_camellia;
 		rijndael_ctx	pctx_aes;
-		struct hmac_sha512_ctx pctx_hmac;
+		struct hmac_ctx	pctx_hmac;
 		vmac_ctx_t	pctx_vmac;
 #ifdef PEFS_AESNI
 		struct pefs_aesni_ctx pctx_aesni;

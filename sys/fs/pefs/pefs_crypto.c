@@ -40,12 +40,14 @@ __FBSDID("$FreeBSD$");
 #include <sys/vnode.h>
 #include <vm/uma.h>
 
+#include <opencrypto/cryptodev.h>
+
 #include <fs/pefs/pefs.h>
 #include <fs/pefs/pefs_crypto.h>
 
 #define	PEFS_NAME_KEY_BITS	128
 
-CTASSERT(PEFS_KEY_SIZE <= SHA512_DIGEST_LENGTH);
+CTASSERT(PEFS_KEY_SIZE <= HMAC_DIGEST_LENGTH_MAX);
 CTASSERT(PEFS_TWEAK_SIZE == 64/8);
 CTASSERT(PEFS_NAME_CSUM_SIZE <= sizeof(uint64_t));
 CTASSERT(MAXNAMLEN >= PEFS_NAME_PTON_SIZE(MAXNAMLEN) + PEFS_NAME_BLOCK_SIZE);
@@ -159,11 +161,12 @@ pefs_hkdf_expand(struct pefs_ctx *ctx, const uint8_t *masterkey, uint8_t *key,
 {
 	uint8_t byte_idx = idx;
 
-	hmac_sha512_init(&ctx->o.pctx_hmac, masterkey, PEFS_KEY_SIZE);
-	hmac_sha512_update(&ctx->o.pctx_hmac, key, PEFS_KEY_SIZE);
-	hmac_sha512_update(&ctx->o.pctx_hmac, magic, magicsize);
-	hmac_sha512_update(&ctx->o.pctx_hmac, &byte_idx, sizeof(byte_idx));
-	hmac_sha512_final(&ctx->o.pctx_hmac, key, PEFS_KEY_SIZE);
+	hmac_init(&ctx->o.pctx_hmac, CRYPTO_SHA2_512_HMAC,
+	    masterkey, PEFS_KEY_SIZE);
+	hmac_update(&ctx->o.pctx_hmac, key, PEFS_KEY_SIZE);
+	hmac_update(&ctx->o.pctx_hmac, magic, magicsize);
+	hmac_update(&ctx->o.pctx_hmac, &byte_idx, sizeof(byte_idx));
+	hmac_final(&ctx->o.pctx_hmac, key, PEFS_KEY_SIZE);
 }
 
 static void
