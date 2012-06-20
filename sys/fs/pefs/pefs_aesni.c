@@ -45,7 +45,7 @@ __FBSDID("$FreeBSD$");
 
 DPCPU_DEFINE(struct fpu_kern_ctx *, pefs_aesni_fpu);
 
-#if __FreeBSD_version < 1000005
+#if __FreeBSD_version < 900503
 static struct fpu_kern_ctx *
 fpu_kern_alloc_ctx(int flags __unused)
 {
