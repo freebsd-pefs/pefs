@@ -358,8 +358,8 @@ pefs_delkey(int argc, char *argv[])
 static int
 pefs_setkey(int argc, char *argv[])
 {
-	struct pefs_xkey k;
 	struct pefs_keychain_head kch;
+	struct pefs_keychain *kc;
 	struct pefs_keyparam kp;
 	char fsroot[MAXPATHLEN];
 	int error, fd, i;
@@ -370,12 +370,6 @@ pefs_setkey(int argc, char *argv[])
 	pefs_keyparam_create(&kp);
 	while ((i = getopt(argc, argv, "cCpvxa:i:k:")) != -1)
 		switch(i) {
-		case 'v':
-			verbose = 1;
-			break;
-		case 'x':
-			addkey = 1;
-			break;
 		case 'a':
 			if (pefs_keyparam_setalg(&kp, optarg) != 0)
 				pefs_usage_alg();
@@ -396,6 +390,12 @@ pefs_setkey(int argc, char *argv[])
 		case 'k':
 			kp.kp_keyfile = optarg;
 			break;
+		case 'v':
+			verbose = 1;
+			break;
+		case 'x':
+			addkey = 1;
+			break;
 		default:
 			pefs_usage();
 		}
@@ -415,23 +415,33 @@ pefs_setkey(int argc, char *argv[])
 		pefs_usage();
 	}
 
-	if (pefs_getfsroot(argv[0], 0, fsroot, sizeof(fsroot)) != 0)
-		return (PEFS_ERR_INVALID);
+	initfsroot(argc, argv, 0, fsroot, sizeof(fsroot));
 
 	error = pefs_keychain_lookup(&kch, fsroot, chain, &kp);
 	if (error != 0)
 		return (error);
-	pefs_keychain_free(&kch);
 
-	fd = openx_rdonly(fsroot);
-	if (fd == -1)
+	fd = openx_rdonly(argv[0]);
+	if (fd == -1) {
+		pefs_keychain_free(&kch);
 		return (PEFS_ERR_IO);
+	}
 
-	if (ioctl(fd, PEFS_SETKEY, &k) == -1) {
+	if (addkey) {
+		TAILQ_FOREACH(kc, &kch, kc_entry) {
+			if (ioctl(fd, PEFS_ADDKEY, &kc->kc_key) == 0 && verbose)
+				printf("Key added: %016jx\n",
+				    pefs_keyid_as_int(kc->kc_key.pxk_keyid));
+		}
+	}
+	kc = TAILQ_FIRST(&kch);
+	if (ioctl(fd, PEFS_SETKEY, &kc->kc_key) == -1) {
 		warn("cannot set key");
 		error = PEFS_ERR_SYS;
 	} else if (verbose)
-		pefs_key_shownode(&k, argv[0]);
+		pefs_key_shownode(&kc->kc_key, argv[0]);
+
+	pefs_keychain_free(&kch);
 
 	close(fd);
 

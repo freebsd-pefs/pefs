@@ -2254,9 +2254,7 @@ static int
 pefs_setkey(struct vnode *vp, struct pefs_key *pk, struct ucred *cred,
     struct thread *td)
 {
-	struct vnode *dvp;
-	struct vnode *lvp;
-	struct vnode *ldvp;
+	struct vnode *dvp, *ldvp, *lvp;
 	struct componentname cn;
 	struct pefs_node *pn = VP_TO_PN(vp);
 	struct pefs_enccn fenccn, tenccn;
@@ -2276,6 +2274,7 @@ pefs_setkey(struct vnode *vp, struct pefs_key *pk, struct ucred *cred,
 	namebuf = malloc(MAXNAMLEN, M_PEFSBUF, M_WAITOK | M_ZERO);
 	namelen = MAXNAMLEN - 1;
 	dvp = vp;
+	vref(vp);
 	error = vn_vptocnp(&dvp, cred, namebuf, &namelen);
 	if (error != 0) {
 		PEFSDEBUG("pefs_setkey: vn_vptocnp failed: error=%d; vp=%p\n",
@@ -2284,42 +2283,42 @@ pefs_setkey(struct vnode *vp, struct pefs_key *pk, struct ucred *cred,
 		return (error);
 	}
 	bzero(&cn, sizeof(cn));
-	cn.cn_nameiop = RENAME;
 	cn.cn_thread = td;
 	cn.cn_cred = cred;
+	cn.cn_flags = LOCKPARENT | LOCKLEAF | ISLASTCN | SAVENAME;
 	cn.cn_lkflags = LK_EXCLUSIVE;
 	cn.cn_pnbuf = cn.cn_nameptr = namebuf + namelen;
 	cn.cn_namelen = MAXNAMLEN - 1 - namelen;
 
 	MPASS(dvp->v_mount == vp->v_mount);
-	lvp = PEFS_LOWERVP(vp);
-	ldvp = PEFS_LOWERVP(dvp);
 	vn_lock(dvp, LK_EXCLUSIVE | LK_RETRY);
 	vn_lock(vp, LK_EXCLUSIVE | LK_RETRY);
-#if __FreeBSD_version < 1000001
-	vdrop(dvp); /* vhold by vn_vptocnp */
-#endif
 
 	error = VOP_ACCESS(vp, VWRITE, cred, td);
-	if (error == 0)
+	if (error == 0) {
+		cn.cn_nameiop = DELETE;
 		error = pefs_enccn_get(&fenccn, dvp, vp, &cn);
+	}
 	if (error != 0) {
 		VOP_UNLOCK(vp, 0);
-#if __FreeBSD_version >= 1000001
+#if __FreeBSD_version >= 900501
 		vput(dvp); /* vref by vn_vptocnp */
 #else
 		VOP_UNLOCK(dvp, 0);
+		vdrop(dvp); /* vrele by vn_vptocnp */
 #endif
 		PEFSDEBUG("pefs_setkey: pefs_enccn_get failed: %d\n", error);
 		goto out;
 	}
+	cn.cn_nameiop = RENAME;
 	error = pefs_enccn_create(&tenccn, pk, NULL, &cn);
 	if (error != 0) {
 		VOP_UNLOCK(vp, 0);
-#if __FreeBSD_version >= 1000001
+#if __FreeBSD_version >= 900501
 		vput(dvp); /* vref by vn_vptocnp */
 #else
 		VOP_UNLOCK(dvp, 0);
+		vdrop(dvp); /* vrele by vn_vptocnp */
 #endif
 		pefs_enccn_free(&fenccn);
 		goto out;
@@ -2328,14 +2327,43 @@ pefs_setkey(struct vnode *vp, struct pefs_key *pk, struct ucred *cred,
 	    fenccn.pec_cn.cn_nameptr, fenccn.pec_tkey.ptk_key);
 	PEFSDEBUG("pefs_setkey: toname=%s; key=%p\n",
 	    tenccn.pec_cn.cn_nameptr, tenccn.pec_tkey.ptk_key);
-	vref(lvp);
-	vref(lvp);
+	ldvp = PEFS_LOWERVP(dvp);
+	VOP_UNLOCK(PEFS_LOWERVP(vp), 0);
+	error = VOP_LOOKUP(ldvp, &lvp, &fenccn.pec_cn);
+	if (error != 0) {
+		PEFSDEBUG("pefs_setkey: lookup faild: %s\n",
+		    fenccn.pec_cn.cn_nameptr);
+#if __FreeBSD_version >= 900501
+		vput(dvp); /* vref by vn_vptocnp */
+#else
+		VOP_UNLOCK(dvp, 0);
+		vdrop(dvp); /* vrele by vn_vptocnp */
+#endif
+		goto out_enccn;
+	}
+	MPASS(lvp == PEFS_LOWERVP(vp));
+	VOP_UNLOCK(PEFS_LOWERVP(vp), 0);
+	error = VOP_LOOKUP(ldvp, &lvp, &tenccn.pec_cn);
+	if (error != EJUSTRETURN) {
+		PEFSDEBUG("pefs_setkey: lookup faild: %s\n",
+		    tenccn.pec_cn.cn_nameptr);
+#if __FreeBSD_version >= 900501
+		vput(dvp); /* vref by vn_vptocnp */
+#else
+		VOP_UNLOCK(dvp, 0);
+		vdrop(dvp); /* vrele by vn_vptocnp */
+#endif
+		error = EBUSY;
+		goto out_enccn;
+	}
 	vref(ldvp);
 	vref(ldvp);
-	error = VOP_RENAME(ldvp, lvp, &fenccn.pec_cn, ldvp, lvp,
+	error = VOP_RENAME(ldvp, PEFS_LOWERVP(vp), &fenccn.pec_cn, ldvp, NULL,
 	    &tenccn.pec_cn);
-#if __FreeBSD_version >= 1000001
+#if __FreeBSD_version >= 900501
 	vrele(dvp); /* vref by vn_vptocnp */
+#else
+	vdrop(dvp); /* vrele by vn_vptocnp */
 #endif
 	if (error == 0) {
 		vn_lock(vp, LK_EXCLUSIVE | LK_RETRY);
@@ -2343,6 +2371,7 @@ pefs_setkey(struct vnode *vp, struct pefs_key *pk, struct ucred *cred,
 		VOP_UNLOCK(vp, 0);
 	}
 
+out_enccn:
 	pefs_enccn_free(&fenccn);
 	pefs_enccn_free(&tenccn);
 
@@ -2351,7 +2380,6 @@ out:
 
 	return (error);
 }
-
 static int
 pefs_ioctl(struct vop_ioctl_args *ap)
 {
@@ -2401,7 +2429,7 @@ pefs_ioctl(struct vop_ioctl_args *ap)
 			error = ENOENT;
 		break;
 	case PEFS_GETNODEKEY:
-		PEFSDEBUG("pefs_ioctl: set key: %8D\n", xk->pxk_keyid, "");
+		PEFSDEBUG("pefs_ioctl: get key: %8D\n", xk->pxk_keyid, "");
 		pn = VP_TO_PN(vp);
 		if ((pn->pn_flags & PN_HASKEY) != 0) {
 			mtx_lock(&pm->pm_keys_lock);

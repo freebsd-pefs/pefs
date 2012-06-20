@@ -241,7 +241,7 @@ pefs_node_lookup_name(struct vnode *lvp, struct vnode *ldvp, struct ucred *cred,
 	nldvp = lvp;
 	error = vn_vptocnp(&nldvp, cred, encname, encname_len);
 	if (error == 0) {
-#if __FreeBSD_version >= 1000001
+#if __FreeBSD_version >= 900501
 		vrele(nldvp);
 #else
 		vdrop(nldvp);
