@@ -73,3 +73,40 @@ pefs_getfsroot(const char *path, int flags, char *fsroot, size_t size)
 
 	return (0);
 }
+
+int
+pefs_readfiles(const char **files, size_t count, void *ctx,
+    int (*handler)(void *, const char *, size_t, const char *))
+{
+	char buf[BUFSIZ];
+	ssize_t done;
+	size_t i;
+	int error, fd;
+
+	for (i = 0; i < count; i++) {
+		if (strcmp(files[i], "-") == 0)
+			fd = STDIN_FILENO;
+		else {
+			fd = open(files[i], O_RDONLY);
+			if (fd == -1) {
+				pefs_warn("cannot open key file %s: %s",
+				    files[i], strerror(errno));
+				return (PEFS_ERR_IO);
+			}
+		}
+		while ((done = read(fd, buf, sizeof(buf))) > 0) {
+			error = handler(ctx, buf, done, files[i]);
+			if (error != 0)
+				return (error);
+		}
+		bzero(buf, sizeof(buf));
+		if (done == -1) {
+			pefs_warn("cannot read key file %s: %s",
+			    files[i], strerror(errno));
+			return (PEFS_ERR_IO);
+		}
+		if (fd != STDIN_FILENO)
+			close(fd);
+	}
+	return (0);
+}

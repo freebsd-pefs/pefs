@@ -150,6 +150,51 @@ openx_rdonly(const char *path)
 
 }
 
+struct pefs_readpassfile_ctx {
+	size_t	passphrase_pos;
+	size_t	passphrase_sz;
+	char	*passphrase;
+};
+
+static int
+pefs_readpassfile_handler(void *a, const char *buf, size_t len, const char *file)
+{
+	struct pefs_readpassfile_ctx *ctx = a;
+
+	if (strlen(buf) != len) {
+		pefs_warn("invalid pass-file content: %s.", file);
+		return (PEFS_ERR_INVALID);
+	}
+	if (strlcat(ctx->passphrase, buf, ctx->passphrase_sz) >=
+	    ctx->passphrase_sz) {
+		pefs_warn("passphrase in %s too long.", file);
+		bzero(ctx->passphrase, ctx->passphrase_sz);
+		return (PEFS_ERR_INVALID);
+	}
+
+	return (0);
+}
+
+static int
+pefs_readpassfile(char *passphrase, int passphrase_sz, const char **files,
+    int file_count)
+{
+	struct pefs_readpassfile_ctx ctx;
+	int error;
+
+	ctx.passphrase_pos = 0;
+	ctx.passphrase_sz = passphrase_sz;
+	ctx.passphrase = passphrase;
+
+	bzero(ctx.passphrase, ctx.passphrase_sz);
+
+	error = pefs_readfiles(files, file_count, &ctx,
+	    pefs_readpassfile_handler);
+	if (error != 0)
+		bzero(ctx.passphrase, ctx.passphrase_sz);
+	return (error);
+}
+
 static int
 pefs_readpassphrase(char *passphrase, int passphrase_sz, const char *prompt,
     int verify)
@@ -193,7 +238,18 @@ pefs_key_get(struct pefs_xkey *xk, const char *prompt, int verify,
 	char buf[BUFSIZ];
 	int error;
 
-	if (kp->kp_nopassphrase == 0) {
+	if (kp->kp_passfile_count != 0 && kp->kp_nopassphrase != 0) {
+		pefs_warn("options no-passphrase (-p) and passphrase-file (-j) "
+		    "are mutually exclusive.");
+		return (PEFS_ERR_USAGE);
+	}
+
+	if (kp->kp_passfile_count != 0) {
+		error = pefs_readpassfile(buf, sizeof(buf), kp->kp_passfile,
+		    kp->kp_passfile_count);
+		if (error != 0)
+			return (error);
+	} else if (kp->kp_nopassphrase == 0) {
 		error = pefs_readpassphrase(buf, sizeof(buf), prompt, verify);
 		if (error != 0)
 			return (error);
@@ -258,7 +314,7 @@ pefs_keyop(keyop_func_t func, int argc, char *argv[])
 	int verbose = 0;
 
 	pefs_keyparam_create(&kp);
-	while ((i = getopt(argc, argv, "cCpva:i:k:")) != -1)
+	while ((i = getopt(argc, argv, "cCpva:i:j:k:")) != -1)
 		switch(i) {
 		case 'a':
 			if (pefs_keyparam_setalg(&kp, optarg) != 0)
@@ -277,8 +333,15 @@ pefs_keyop(keyop_func_t func, int argc, char *argv[])
 			if (pefs_keyparam_setiterations(&kp, optarg) != 0)
 				pefs_usage();
 			break;
+		case 'j':
+			if (pefs_keyparam_setfile(&kp, kp.kp_passfile,
+			    optarg) != 0)
+				pefs_usage();
+			break;
 		case 'k':
-			kp.kp_keyfile = optarg;
+			if (pefs_keyparam_setfile(&kp, kp.kp_keyfile,
+			    optarg) != 0)
+				pefs_usage();
 			break;
 		case 'v':
 			verbose = 1;
@@ -368,7 +431,7 @@ pefs_setkey(int argc, char *argv[])
 	int chain = PEFS_KEYCHAIN_IGNORE_MISSING;
 
 	pefs_keyparam_create(&kp);
-	while ((i = getopt(argc, argv, "cCpvxa:i:k:")) != -1)
+	while ((i = getopt(argc, argv, "cCpvxa:i:j:k:")) != -1)
 		switch(i) {
 		case 'a':
 			if (pefs_keyparam_setalg(&kp, optarg) != 0)
@@ -387,8 +450,15 @@ pefs_setkey(int argc, char *argv[])
 			if (pefs_keyparam_setiterations(&kp, optarg) != 0)
 				pefs_usage();
 			break;
+		case 'j':
+			if (pefs_keyparam_setfile(&kp, kp.kp_passfile,
+			    optarg) != 0)
+				pefs_usage();
+			break;
 		case 'k':
-			kp.kp_keyfile = optarg;
+			if (pefs_keyparam_setfile(&kp, kp.kp_keyfile,
+			    optarg) != 0)
+				pefs_usage();
 			break;
 		case 'v':
 			verbose = 1;
@@ -663,6 +733,7 @@ pefs_addchain(int argc, char *argv[])
 		struct pefs_keyparam kp;
 	} p[2];
 	struct pefs_xkey *k1 = &p[0].k, *k2 = &p[1].k;
+	struct pefs_keyparam *kpi;
 	char fsroot[MAXPATHLEN];
 	int fsflags = 0, verbose = 0;
 	int zerochainedkey = 0, optchainedkey = 0;
@@ -670,7 +741,7 @@ pefs_addchain(int argc, char *argv[])
 
 	pefs_keyparam_create(&p[0].kp);
 	pefs_keyparam_create(&p[1].kp);
-	while ((i = getopt(argc, argv, "a:A:i:I:k:K:fpPvZ")) != -1)
+	while ((i = getopt(argc, argv, "a:A:i:I:j:J:k:K:fpPvZ")) != -1)
 		switch(i) {
 		case 'v':
 			verbose = 1;
@@ -685,29 +756,42 @@ pefs_addchain(int argc, char *argv[])
 		case 'A':
 			if (isupper(i))
 				optchainedkey = i;
-			if (pefs_keyparam_setalg(
-			    &p[isupper(i) ? 1 : 0].kp, optarg) != 0)
+			kpi = &p[isupper(i) ? 1 : 0].kp;
+			if (pefs_keyparam_setalg(kpi, optarg) != 0)
 				pefs_usage_alg();
 			break;
 		case 'p':
 		case 'P':
 			if (isupper(i))
 				optchainedkey = i;
-			p[isupper(i) ? 1 : 0].kp.kp_nopassphrase = 1;
+			kpi = &p[isupper(i) ? 1 : 0].kp;
+			kpi->kp_nopassphrase = 1;
 			break;
 		case 'i':
 		case 'I':
 			if (isupper(i))
 				optchainedkey = i;
-			if (pefs_keyparam_setiterations(
-			    &p[isupper(i) ? 1 : 0].kp, optarg) != 0)
+			kpi = &p[isupper(i) ? 1 : 0].kp;
+			if (pefs_keyparam_setiterations(kpi, optarg) != 0)
+				pefs_usage();
+			break;
+		case 'j':
+		case 'J':
+			if (isupper(i))
+				optchainedkey = i;
+			kpi = &p[isupper(i) ? 1 : 0].kp;
+			if (pefs_keyparam_setfile(kpi, kpi->kp_passfile,
+			    optarg) != 0)
 				pefs_usage();
 			break;
 		case 'k':
 		case 'K':
 			if (isupper(i))
 				optchainedkey = i;
-			p[isupper(i) ? 1 : 0].kp.kp_keyfile = optarg;
+			kpi = &p[isupper(i) ? 1 : 0].kp;
+			if (pefs_keyparam_setfile(kpi, kpi->kp_keyfile,
+			    optarg) != 0)
+				pefs_usage();
 			break;
 		default:
 			pefs_usage();
@@ -815,7 +899,7 @@ pefs_delchain(int argc, char *argv[])
 	int error, i;
 
 	pefs_keyparam_create(&kp);
-	while ((i = getopt(argc, argv, "fFvpi:k:")) != -1)
+	while ((i = getopt(argc, argv, "fFvpi:j:k:")) != -1)
 		switch(i) {
 		case 'f':
 			fsflags |= PEFS_FS_IGNORE_TYPE;
@@ -833,9 +917,15 @@ pefs_delchain(int argc, char *argv[])
 			if (pefs_keyparam_setiterations(&kp, optarg) != 0)
 				pefs_usage();
 			break;
-		case 'k':
-			kp.kp_keyfile = optarg;
+		case 'j':
+			if (pefs_keyparam_setfile(&kp, kp.kp_passfile,
+			    optarg) != 0)
+				pefs_usage();
 			break;
+		case 'k':
+			if (pefs_keyparam_setfile(&kp, kp.kp_keyfile,
+			    optarg) != 0)
+				pefs_usage();
 		default:
 			pefs_usage();
 		}
@@ -884,7 +974,7 @@ pefs_showchains(int argc, char *argv[])
 	int error, i;
 
 	pefs_keyparam_create(&kp);
-	while ((i = getopt(argc, argv, "fpi:k:")) != -1)
+	while ((i = getopt(argc, argv, "fpi:j:k:")) != -1)
 		switch(i) {
 		case 'f':
 			fsflags |= PEFS_FS_IGNORE_TYPE;
@@ -896,8 +986,14 @@ pefs_showchains(int argc, char *argv[])
 			if (pefs_keyparam_setiterations(&kp, optarg) != 0)
 				pefs_usage();
 			break;
+		case 'j':
+			if (pefs_keyparam_setfile(&kp, kp.kp_passfile,
+			    optarg) != 0)
+				pefs_usage();
 		case 'k':
-			kp.kp_keyfile = optarg;
+			if (pefs_keyparam_setfile(&kp, kp.kp_keyfile,
+			    optarg) != 0)
+				pefs_usage();
 			break;
 		default:
 			pefs_usage();
@@ -1014,17 +1110,17 @@ pefs_usage(void)
 	fprintf(stderr,
 "usage:	pefs mount [-o options] [from filesystem]\n"
 "	pefs unmount [-fv] filesystem\n"
-"	pefs addkey [-cCpv] [-a alg] [-i iterations] [-k keyfile] filesystem\n"
-"	pefs delkey [-cCpv] [-i iterations] [-k keyfile] filesystem\n"
+"	pefs addkey [-cCpv] [-a alg] [-i iterations] [-j passfile] [-k keyfile] filesystem\n"
+"	pefs delkey [-cCpv] [-i iterations] [-j passfile] [-k keyfile] filesystem\n"
 "	pefs flushkeys filesystem\n"
 "	pefs getkey [-t] file\n"
-"	pefs setkey [-cCpvx] [-a alg] [-i iterations] [-k keyfile] directory\n"
+"	pefs setkey [-cCpvx] [-a alg] [-i iterations] [-j passfile] [-k keyfile] directory\n"
 "	pefs showkeys [-t] filesystem\n"
-"	pefs addchain [-fpPvZ] [-a alg] [-i iterations] [-k keyfile]\n"
-"		[-A alg] [-I iterations] [-K keyfile] filesystem\n"
-"	pefs delchain [-fFpv] [-i iterations] [-k keyfile] filesystem\n"
+"	pefs addchain [-fpPvZ] [-a alg] [-i iterations] [-j passfile] [-k keyfile]\n"
+"		[-A alg] [-I iterations] [-J passfile] [-K keyfile] filesystem\n"
+"	pefs delchain [-fFpv] [-i iterations] [-j passfile] [-k keyfile] filesystem\n"
 "	pefs randomchain [-fv] [-n min] [-N max] filesystem\n"
-"	pefs showchains [-fp] [-i iterations] [-k keyfile] filesystem\n"
+"	pefs showchains [-fp] [-i iterations] [-j passfile] [-k keyfile] filesystem\n"
 "	pefs showalgs\n"
 );
 	exit(PEFS_ERR_USAGE);

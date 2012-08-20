@@ -162,6 +162,34 @@ pefs_keyparam_setiterations(struct pefs_keyparam *kp, const char *arg)
 	return (0);
 }
 
+int
+pefs_keyparam_setfile(struct pefs_keyparam *kp, const char **files,
+    const char *arg)
+{
+	int *countp;
+
+	if (files == kp->kp_keyfile)
+		countp = &kp->kp_keyfile_count;
+	else if (files == kp->kp_passfile)
+		countp = &kp->kp_passfile_count;
+	else {
+		pefs_warn("internal error. invalid key parameters file type");
+		return (PEFS_ERR_INVALID);
+	}
+	if (arg == NULL || arg[0] == '\0') {
+		pefs_warn("invalid key file");
+		return (PEFS_ERR_INVALID);
+	}
+	if (*countp == PEFS_KEYPARAM_FILES_MAX) {
+		pefs_warn("key file limit exceed, %d max",
+		    PEFS_KEYPARAM_FILES_MAX);
+		return (PEFS_ERR_INVALID);
+	}
+	files[(*countp)++] = arg;
+
+	return (0);
+}
+
 static int
 pefs_keyparam_handle(struct pefs_keyparam *kp, int ind, const char *param)
 {
@@ -237,14 +265,23 @@ pefs_keyid_as_int(char *keyid)
 	return (r);
 }
 
+static int
+pefs_readkeyfile_handler(void *a, const char *buf, size_t len,
+    const char *file __unused)
+{
+	struct hmac_ctx *ctx = a;
+
+	hmac_update(ctx, buf, len);
+
+	return (0);
+}
+
 int
 pefs_key_generate(struct pefs_xkey *xk, const char *passphrase,
     struct pefs_keyparam *kp)
 {
 	struct hmac_ctx ctx;
-	char buf[BUFSIZ];
-	ssize_t done;
-	int fd;
+	int error;
 
 	if (kp->kp_alg <= 0 || kp->kp_keybits <= 0 ||
 	    kp->kp_iterations < 0) {
@@ -258,37 +295,18 @@ pefs_key_generate(struct pefs_xkey *xk, const char *passphrase,
 
 	hmac_init(&ctx, CRYPTO_SHA2_512_HMAC, NULL, 0);
 
-	if (kp->kp_keyfile != NULL && kp->kp_keyfile[0] == '\0')
-		kp->kp_keyfile = NULL;
-	if (kp->kp_keyfile == NULL && kp->kp_nopassphrase) {
+	if (kp->kp_keyfile_count == 0 && passphrase == NULL) {
 		pefs_warn("no key components given");
 		return (PEFS_ERR_USAGE);
 	}
-	if (kp->kp_keyfile != NULL) {
-		if (strcmp(kp->kp_keyfile, "-") == 0)
-			fd = STDIN_FILENO;
-		else {
-			fd = open(kp->kp_keyfile, O_RDONLY);
-			if (fd == -1) {
-				pefs_warn("cannot open keyfile %s: %s",
-				    kp->kp_keyfile, strerror(errno));
-				return (PEFS_ERR_IO);
-			}
-		}
-		while ((done = read(fd, buf, sizeof(buf))) > 0)
-			hmac_update(&ctx, buf, done);
-		bzero(buf, sizeof(buf));
-		if (done == -1) {
-			pefs_warn("cannot read keyfile %s: %s",
-			    kp->kp_keyfile, strerror(errno));
-			bzero(&ctx, sizeof(ctx));
-			return (PEFS_ERR_IO);
-		}
-		if (fd != STDIN_FILENO)
-			close(fd);
+	if (kp->kp_keyfile_count != 0) {
+		error = pefs_readfiles(kp->kp_keyfile, kp->kp_keyfile_count,
+		    &ctx, pefs_readkeyfile_handler);
+		if (error != 0)
+			return (error);
 	}
 
-	if (kp->kp_nopassphrase == 0) {
+	if (passphrase != NULL) {
 		if (kp->kp_iterations == 0) {
 			hmac_update(&ctx, passphrase,
 			    strlen(passphrase));
