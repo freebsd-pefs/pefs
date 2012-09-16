@@ -46,12 +46,14 @@
 .Op Fl cCpv
 .Op Fl a Ar alg
 .Op Fl i Ar iterations
+.Op Fl j Ar passfile
 .Op Fl k Ar keyfile
 .Ar filesystem
 .Nm
 .Cm delkey
 .Op Fl cCpv
 .Op Fl i Ar iterations
+.Op Fl j Ar passfile
 .Op Fl k Ar keyfile
 .Ar filesystem
 .Nm
@@ -66,6 +68,7 @@
 .Op Fl cCpvx
 .Op Fl a Ar alg
 .Op Fl i Ar iterations
+.Op Fl j Ar passfile
 .Op Fl k Ar keyfile
 .Ar directory
 .Nm
@@ -78,27 +81,32 @@
 .Op Fl fpPvZ
 .Op Fl a Ar alg
 .Op Fl i Ar iterations
+.Op Fl j Ar passfile
 .Op Fl k Ar keyfile
 .Op Fl A Ar alg
 .Op Fl I Ar iterations
+.Op Fl J Ar passfile
 .Op Fl K Ar keyfile
 .Ar filesystem
 .Nm
 .Cm delchain
 .Op Fl fFpv
 .Op Fl i Ar iterations
+.Op Fl j Ar passfile
 .Op Fl k Ar keyfile
 .Ar filesystem
 .Nm
 .Cm randomchain
 .Op Fl fv
 .Op Fl i Ar iterations
+.Op Fl j Ar passfile
 .Op Fl k Ar keyfile
 .Ar filesystem
 .Nm
 .Cm showchains
 .Op Fl fp
 .Op Fl i Ar iterations
+.Op Fl j Ar passfile
 .Op Fl k Ar keyfile
 .Ar filesystem
 .Pp
@@ -257,6 +265,23 @@ If this option is not specified default value of 50000 is used.
 Specifies number of
 .Ar iterations
 for the secondary/child key.
+.It Fl j Ar passfile
+Specifies a file which contains the passphrase.
+If
+.Ar passfile
+is given as -, standard input will be used.
+Only the first line (excluding new-line character) is taken from the given
+file.
+This argument can be specified multiple times, which has the effect of
+reassembling a single passphrase split across multiple files.
+Cannot be combined with the
+.Fl p
+option.
+.It Fl J Ar passfile
+Specifies a file which contains the passphrase for secondary/child key.
+Cannot be combined with
+.Fl P
+option.
 .It Fl f
 Forces operation.
 Use to force

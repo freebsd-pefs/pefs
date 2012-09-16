@@ -83,7 +83,7 @@ void	pefs_warn(const char *, ...) __printf0like(1, 2);
 
 int	pefs_getfsroot(const char *path, int flags, char *fsroot, size_t size);
 int	pefs_readfiles(const char **files, size_t count, void *ctx,
-	    int (*handler)(void *, const char *, size_t, const char *));
+	    int (*handler)(void *, uint8_t *, size_t, const char *));
 
 int	pefs_key_generate(struct pefs_xkey *xk, const char *passphrase,
 	    struct pefs_keyparam *kp);

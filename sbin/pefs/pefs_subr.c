@@ -76,9 +76,9 @@ pefs_getfsroot(const char *path, int flags, char *fsroot, size_t size)
 
 int
 pefs_readfiles(const char **files, size_t count, void *ctx,
-    int (*handler)(void *, const char *, size_t, const char *))
+    int (*handler)(void *, uint8_t *, size_t, const char *))
 {
-	char buf[BUFSIZ];
+	uint8_t buf[BUFSIZ + 1];
 	ssize_t done;
 	size_t i;
 	int error, fd;
@@ -94,7 +94,8 @@ pefs_readfiles(const char **files, size_t count, void *ctx,
 				return (PEFS_ERR_IO);
 			}
 		}
-		while ((done = read(fd, buf, sizeof(buf))) > 0) {
+		while ((done = read(fd, buf, sizeof(buf) - 1)) > 0) {
+			buf[done] = '\0';
 			error = handler(ctx, buf, done, files[i]);
 			if (error != 0)
 				return (error);

@@ -157,14 +157,19 @@ struct pefs_readpassfile_ctx {
 };
 
 static int
-pefs_readpassfile_handler(void *a, const char *buf, size_t len, const char *file)
+pefs_readpassfile_handler(void *a, uint8_t *buf, size_t len, const char *file)
 {
 	struct pefs_readpassfile_ctx *ctx = a;
+	char *s;
 
 	if (strlen(buf) != len) {
-		pefs_warn("invalid pass-file content: %s.", file);
+		pefs_warn("invalid passfile content: %s.", file);
 		return (PEFS_ERR_INVALID);
 	}
+
+	s = strchr(buf, '\n');
+	if (s != NULL)
+		*s = '\0';
 	if (strlcat(ctx->passphrase, buf, ctx->passphrase_sz) >=
 	    ctx->passphrase_sz) {
 		pefs_warn("passphrase in %s too long.", file);

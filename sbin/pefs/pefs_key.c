@@ -266,7 +266,7 @@ pefs_keyid_as_int(char *keyid)
 }
 
 static int
-pefs_readkeyfile_handler(void *a, const char *buf, size_t len,
+pefs_readkeyfile_handler(void *a, uint8_t *buf, size_t len,
     const char *file __unused)
 {
 	struct hmac_ctx *ctx = a;
