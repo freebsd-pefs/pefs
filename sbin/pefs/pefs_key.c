@@ -295,7 +295,7 @@ pefs_key_generate(struct pefs_xkey *xk, const char *passphrase,
 
 	hmac_init(&ctx, CRYPTO_SHA2_512_HMAC, NULL, 0);
 
-	if (kp->kp_keyfile_count == 0 && passphrase == NULL) {
+	if (kp->kp_keyfile_count == 0 && passphrase[0] == '\0') {
 		pefs_warn("no key components given");
 		return (PEFS_ERR_USAGE);
 	}
@@ -306,7 +306,7 @@ pefs_key_generate(struct pefs_xkey *xk, const char *passphrase,
 			return (error);
 	}
 
-	if (passphrase != NULL) {
+	if (passphrase[0] != '\0') {
 		if (kp->kp_iterations == 0) {
 			hmac_update(&ctx, passphrase,
 			    strlen(passphrase));

@@ -249,6 +249,7 @@ pefs_key_get(struct pefs_xkey *xk, const char *prompt, int verify,
 		return (PEFS_ERR_USAGE);
 	}
 
+	buf[0] = '\0';
 	if (kp->kp_passfile_count != 0) {
 		error = pefs_readpassfile(buf, sizeof(buf), kp->kp_passfile,
 		    kp->kp_passfile_count);
