@@ -462,14 +462,18 @@ static __inline void
 pefs_node_free(struct pefs_node *pn)
 {
 	struct vnode *lowervp;
-	int vfslocked;
 
 	lowervp = pn->pn_lowervp_dead;
 	uma_zfree(pefs_node_zone, pn);
 	if (lowervp != NULL) {
+#if __FreeBSD_version < 1000021
+		int vfslocked;
 		vfslocked = VFS_LOCK_GIANT(lowervp->v_mount);
+#endif
 		vrele(lowervp);
+#if __FreeBSD_version < 1000021
 		VFS_UNLOCK_GIANT(vfslocked);
+#endif
 	}
 }
 

@@ -296,9 +296,11 @@ pefs_mount(struct mount *mp)
 		mp->mnt_flag |= MNT_LOCAL;
 		MNT_IUNLOCK(mp);
 	}
+#if __FreeBSD_version < 1000021
 	MNT_ILOCK(mp);
 	mp->mnt_kern_flag |= lowerrootvp->v_mount->mnt_kern_flag & MNTK_MPSAFE;
 	MNT_IUNLOCK(mp);
+#endif
 	mp->mnt_data =  pm;
 	vfs_getnewfsid(mp);
 
