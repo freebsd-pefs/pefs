@@ -66,7 +66,7 @@ struct pefs_ctx {
 		struct pefs_aesni_ctx pctx_aesni;
 #endif
 	} o;
-} __aligned(16);
+} __aligned(CACHE_LINE_SIZE);
 
 struct pefs_session {
 	union {
