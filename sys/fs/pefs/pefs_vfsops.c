@@ -56,7 +56,11 @@ struct pefs_opt_descr {
 static const struct pefs_opt_descr pefs_opt_support[] = {
 	{
 		.fs = "zfs",
+#if __FreeBSD_version >= 1000025
+		.initial = PM_DIRCACHE,
+#else
 		.initial = PM_DIRCACHE | PM_ASYNCRECLAIM,
+#endif
 		.forbid = 0
 	},
 	{	/* default flags */
