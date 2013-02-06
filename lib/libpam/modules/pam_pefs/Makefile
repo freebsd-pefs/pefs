@@ -15,6 +15,7 @@ SRCS+=	sha2.c
 
 CFLAGS+= -I${PEFSDIR}
 CFLAGS+= -I${SYS}
+WARNS?=	2
 
 DPADD= ${LIBUTIL}
 LDADD= -lutil
