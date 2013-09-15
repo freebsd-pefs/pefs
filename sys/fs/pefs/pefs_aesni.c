@@ -117,7 +117,8 @@ pefs_aesni_encrypt(const struct pefs_session *xses,
 	const struct pefs_aesni_ctx *ctx = &xctx->o.pctx_aesni;
 
 	if (ses->fpu_saved >= 0)
-		aesni_enc(ctx->rounds - 1, ctx->enc_schedule, in, out, NULL);
+		aesni_encrypt_ecb(ctx->rounds, ctx->enc_schedule, AES_BLOCK_LEN,
+		    in, out);
 	else
 		rijndael_encrypt(&ctx->sw, in, out);
 }
@@ -130,7 +131,8 @@ pefs_aesni_decrypt(const struct pefs_session *xses,
 	const struct pefs_aesni_ctx *ctx = &xctx->o.pctx_aesni;
 
 	if (ses->fpu_saved >= 0)
-		aesni_dec(ctx->rounds - 1, ctx->dec_schedule, in, out, NULL);
+		aesni_decrypt_ecb(ctx->rounds, ctx->dec_schedule, AES_BLOCK_LEN,
+		    in, out);
 	else
 		rijndael_decrypt(&ctx->sw, in, out);
 }
