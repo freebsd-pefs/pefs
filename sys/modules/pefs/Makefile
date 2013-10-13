@@ -13,4 +13,6 @@ SRCS+=	pefs_aesni.c
 CFLAGS+= -DPEFS_AESNI
 .endif
 
+CFLAGS+= -I${.CURDIR}/../../
+
 .include <bsd.kmod.mk>
