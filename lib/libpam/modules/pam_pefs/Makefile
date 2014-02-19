@@ -12,6 +12,7 @@ SRCS+=	rijndael-api.c rijndael-api-fst.c rijndael-alg-fst.c
 SRCS+=	sha2.c
 SRCS+=  hmac_sha512.c
 SRCS+=  pbkdf2_hmac_sha512.c
+SRCS+=  crypto_verify_bytes.c
 
 CFLAGS+= -I${PEFSDIR}
 CFLAGS+= -I${SYS}
@@ -24,5 +25,6 @@ LDADD= -lutil
 
 .PATH: ${PEFSDIR}
 .PATH: ${SYS}/fs/pefs
+.PATH: ${SYS}/crypto
 .PATH: ${SYS}/crypto/rijndael
 .PATH: ${SYS}/crypto/hmac ${SYS}/crypto/pbkdf2 ${SYS}/crypto/sha2

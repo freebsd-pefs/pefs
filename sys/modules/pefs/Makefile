@@ -1,6 +1,7 @@
 # $FreeBSD$
 
 .PATH:	${.CURDIR}/../../fs/pefs
+.PATH:	${.CURDIR}/../../crypto
 .PATH:	${.CURDIR}/../../crypto/hmac
 .PATH:	${.CURDIR}/../../crypto/pbkdf2
 
@@ -9,7 +10,7 @@ SRCS=	vnode_if.h \
 	pefs_subr.c pefs_vfsops.c pefs_vnops.c pefs_xbase64.c pefs_crypto.c \
 	pefs_dircache.c \
 	pefs_xts.c vmac.c \
-	hmac_sha512.c pbkdf2_hmac_sha512.c
+	crypto_verify_bytes.c hmac_sha512.c pbkdf2_hmac_sha512.c
 
 .if ${MACHINE_CPUARCH} == "i386" || ${MACHINE_CPUARCH} == "amd64"
 SRCS+=	pefs_aesni.c

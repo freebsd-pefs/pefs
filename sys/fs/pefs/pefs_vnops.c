@@ -64,6 +64,8 @@ __FBSDID("$FreeBSD$");
 #include <vm/vm_pager.h>
 #include <vm/vnode_pager.h>
 
+#include <crypto/crypto_verify_bytes.h>
+
 #include <fs/pefs/pefs.h>
 #include <fs/pefs/pefs_dircache.h>
 
@@ -102,8 +104,10 @@ pefs_tkey_cmp(struct pefs_tkey *a, struct pefs_tkey *b)
 	int r;
 
 	r = (intptr_t)a->ptk_key - (intptr_t)b->ptk_key;
-	if (r == 0)
-		r = memcmp(a->ptk_tweak, b->ptk_tweak, PEFS_TWEAK_SIZE);
+	if (r == 0) {
+		r = crypto_verify_bytes(a->ptk_tweak, b->ptk_tweak,
+		    PEFS_TWEAK_SIZE);
+	}
 
 	return (r);
 }
@@ -274,7 +278,7 @@ pefs_enccn_parsedir(struct pefs_dircache *pd, struct pefs_ctx *ctx,
 		cache = pefs_cache_dirent(pd, de, ctx, pk);
 		if (cache != NULL && *retval == NULL &&
 		    cache->pde_namelen == name_len &&
-		    memcmp(name, cache->pde_name, name_len) == 0) {
+		    crypto_verify_bytes(name, cache->pde_name, name_len) == 0) {
 			*retval = cache;
 		}
 	}

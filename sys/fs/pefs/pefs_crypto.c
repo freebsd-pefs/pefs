@@ -40,6 +40,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/vnode.h>
 #include <vm/uma.h>
 
+#include <crypto/crypto_verify_bytes.h>
 
 #include <fs/pefs/pefs.h>
 #include <fs/pefs/pefs_crypto.h>
@@ -305,8 +306,10 @@ pefs_key_lookup(struct pefs_mount *pm, char *keyid)
 
 	mtx_assert(&pm->pm_keys_lock, MA_OWNED);
 	TAILQ_FOREACH(pk, &pm->pm_keys, pk_entry) {
-		if (memcmp(pk->pk_keyid, keyid, PEFS_KEYID_SIZE) == 0)
+		if (crypto_verify_bytes(pk->pk_keyid, keyid,
+		    PEFS_KEYID_SIZE) == 0) {
 			return (pk);
+		}
 	}
 
 	return (NULL);
@@ -326,9 +329,10 @@ pefs_key_add(struct pefs_mount *pm, int index, struct pefs_key *pk)
 	pk_pos = NULL;
 	pos = 0;
 	TAILQ_FOREACH(i, &pm->pm_keys, pk_entry) {
-		if (memcmp(pk->pk_keyid, i->pk_keyid, PEFS_KEYID_SIZE) == 0 ||
-		    memcmp(pk->pk_data_ctx, i->pk_data_ctx,
-		    sizeof(struct pefs_ctx)) == 0) {
+		if (crypto_verify_bytes(pk->pk_keyid, i->pk_keyid,
+		    PEFS_KEYID_SIZE) == 0 ||
+		    crypto_verify_bytes((void *)pk->pk_data_ctx,
+		    (void *)i->pk_data_ctx, sizeof(struct pefs_ctx)) == 0) {
 			mtx_unlock(&pm->pm_keys_lock);
 			return (EEXIST);
 		}
