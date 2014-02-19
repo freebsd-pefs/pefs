@@ -590,6 +590,9 @@ pefs_name_encrypt(struct pefs_ctx *ctx, struct pefs_tkey *ptk,
 	KASSERT(ptk != NULL && ptk->ptk_key != NULL,
 	    ("pefs_name_encrypt: key is null"));
 
+	if (plain_len > MAXNAMLEN) {
+		return (-ENAMETOOLONG);
+	}
 	size = PEFS_NAME_CSUM_SIZE + PEFS_TWEAK_SIZE + plain_len;
 	/* Resulting name size, count '.' prepended to name */
 	r = PEFS_NAME_NTOP_SIZE(pefs_name_padsize(size)) + 1;

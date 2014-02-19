@@ -2022,8 +2022,10 @@ pefs_read(struct vop_read_args *ap)
 		return (EOPNOTSUPP);
 	if (uio->uio_resid == 0)
 		return (0);
-	if (uio->uio_offset < 0)
+	if (uio->uio_offset < 0 || uio->uio_resid < 0)
 		return (EINVAL);
+	if ((uoff_t)uio->uio_offset + (uoff_t)uio->uio_resid > (uoff_t)OFF_MAX)
+                return (EFBIG);
 
 	error = pefs_getsize(vp, &fsize, cred);
 	if (error != 0)
@@ -2322,8 +2324,10 @@ pefs_write(struct vop_write_args *ap)
 		return (EOPNOTSUPP);
 	if (uio->uio_resid == 0)
 		return (0);
-	if (uio->uio_offset < 0)
+	if (uio->uio_offset < 0 || uio->uio_resid < 0)
 		return (EINVAL);
+	if ((uoff_t)uio->uio_offset + (uoff_t)uio->uio_resid > (uoff_t)OFF_MAX)
+                return (EFBIG);
 
 	if ((pn->pn_flags & PN_HASKEY) == 0) {
 		if (pefs_no_keys(vp))
