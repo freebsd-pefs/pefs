@@ -157,15 +157,13 @@ pefs_session_leave(const struct pefs_alg *alg, struct pefs_session *ses)
  */
 static void
 pefs_hkdf_expand(struct pefs_ctx *ctx, const uint8_t *masterkey, uint8_t *key,
-    int idx, const uint8_t *magic, size_t magicsize)
+    uint8_t byte_idx, const uint8_t *magic, size_t magicsize)
 {
-	uint8_t byte_idx = idx;
-
 	pefs_hmac_init(&ctx->o.pctx_hmac, CRYPTO_SHA2_512_HMAC,
 	    masterkey, PEFS_KEY_SIZE);
 	pefs_hmac_update(&ctx->o.pctx_hmac, key, PEFS_KEY_SIZE);
 	pefs_hmac_update(&ctx->o.pctx_hmac, magic, magicsize);
-	pefs_hmac_update(&ctx->o.pctx_hmac, &byte_idx, sizeof(byte_idx));
+	pefs_hmac_update(&ctx->o.pctx_hmac, &byte_idx, 1);
 	pefs_hmac_final(&ctx->o.pctx_hmac, key, PEFS_KEY_SIZE);
 }
 
