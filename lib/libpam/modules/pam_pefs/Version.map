@@ -1,0 +1,9 @@
+{
+	local:
+		SHA*;
+		crypto*;
+		hmac*;
+		pbkdf2*;
+		pefs*;
+		rijndael*;
+};
