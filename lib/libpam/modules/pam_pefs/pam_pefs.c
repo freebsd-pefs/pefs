@@ -267,7 +267,7 @@ session_ctr_decr(pam_handle_t *pamh, const char *user)
 	const uint8_t *id;
 	int r;
 
-	r = pam_get_data(pamh, PAM_PEFS_SESSION, (const void **)&id);
+	r = pam_get_data(pamh, PAM_PEFS_SESSION, (const void **)(void *)&id);
 	if (r != PAM_SUCCESS)
 		return (-1);
 	r = session_ctr_update(user, id, false);
