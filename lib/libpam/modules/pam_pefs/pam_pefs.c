@@ -73,7 +73,9 @@ __FBSDID("$FreeBSD$");
 #define	PEFS_OPT_DELKEYS		"delkeys"
 
 #define	PAM_PEFS_KEYS			"pam_pefs_keys"
+#define	PAM_PEFS_SESSION		"pam_pefs_session"
 
+#define	PEFS_SESSION_SIZE		16
 #define	PEFS_SESSION_DIR		"/var/run/pefs"
 #define	PEFS_SESSION_DIR_MODE		0700
 #define	PEFS_SESSION_FILE_MODE		0600
@@ -122,15 +124,38 @@ flopen_retry(const char *filename)
 	return (-1);
 }
 
+static bool
+session_ctr_empty(const uint8_t *sc)
+{
+	const uint8_t *end;
+	uint8_t acc;
+
+	for (end = sc + PEFS_SESSION_SIZE, acc = 0; sc < end; sc++)
+		acc |= *sc;
+	return (acc == 0);
+}
+
+static void
+session_ctr_xor(uint8_t *sc, const uint8_t *si)
+{
+	int i;
+
+	for (i = 0; i < PEFS_SESSION_SIZE; sc++, si++, i++)
+		*sc ^= *si;
+}
+
 static int
-pefs_session_count_incr(const char *user, bool incr)
+session_ctr_update(const char *user, const char *sess_id, bool incr)
 {
 	struct stat sb;
 	struct timespec tp_uptime, tp_now;
-	ssize_t offset;
-	int fd, total = 0;
-	char filename[MAXPATHLEN], buf[16];
-	const char *errstr;
+	ssize_t sess_size;
+	int fd;
+	char filename[MAXPATHLEN];
+	uint8_t sess_ctr[PEFS_SESSION_SIZE];
+
+	if (session_ctr_empty(sess_id))
+		return (-1);
 
 	snprintf(filename, sizeof(filename), "%s/%s", PEFS_SESSION_DIR, user);
 
@@ -156,18 +181,20 @@ pefs_session_count_incr(const char *user, bool incr)
 		return (-1);
 	}
 
-	if ((offset = pread(fd, buf, sizeof(buf) - 1, 0)) == -1) {
+	if ((sess_size = pread(fd, sess_ctr, PEFS_SESSION_SIZE, 0)) == -1) {
 		pefs_warn("unable to read from the session counter file %s: %s",
 		    filename, strerror(errno));
 		close(fd);
 		return (-1);
 	}
-	buf[offset] = '\0';
-	if (offset != 0) {
-		total = strtonum(buf, 0, INT_MAX, &errstr);
-		if (errstr != NULL)
-			pefs_warn("corrupted session counter file: %s: %s",
-			    filename, errstr);
+	lseek(fd, 0L, SEEK_SET);
+	if (sess_size != PEFS_SESSION_SIZE) {
+		if (sess_size != 0) {
+			pefs_warn("invalid session counter file size: %s: %zd",
+			    filename, sess_size);
+		}
+		memset(sess_ctr, 0, PEFS_SESSION_SIZE);
+		ftruncate(fd, PEFS_SESSION_SIZE);
 	}
 
 	/*
@@ -176,7 +203,7 @@ pefs_session_count_incr(const char *user, bool incr)
 	 * It is considered the first increment if the session file has not
 	 * been modified since the last boot time.
 	 */
-	if (incr && total > 0) {
+	if (incr && !session_ctr_empty(sess_ctr)) {
 		if (fstat(fd, &sb) == -1) {
 			pefs_warn("unable to access session counter file %s: %s",
 			    filename, strerror(errno));
@@ -192,27 +219,60 @@ pefs_session_count_incr(const char *user, bool incr)
 		if (sb.st_mtime < tp_now.tv_sec - tp_uptime.tv_sec) {
 			pefs_warn("stale session counter file: %s",
 			    filename);
-			total = 0;
+			memset(sess_ctr, 0, PEFS_SESSION_SIZE);
 		}
 	}
 
-	lseek(fd, 0L, SEEK_SET);
-	ftruncate(fd, 0L);
-
-	total += incr ? 1 : -1;
-	if (total < 0) {
-		pefs_warn("corrupted session counter file: %s",
+	session_ctr_xor(sess_ctr, sess_id);
+	if (incr && session_ctr_empty(sess_ctr)) {
+		pefs_warn("corrupted session counter file after increment: %s",
 		    filename);
-		total = 0;
-	} else
-		pefs_warn("%s: session count %d", user, total);
-
-	buf[0] = '\0';
-	snprintf(buf, sizeof(buf), "%d", total);
-	pwrite(fd, buf, strlen(buf), 0);
+		close(fd);
+		return (-1);
+	}
+	pwrite(fd, sess_ctr, PEFS_SESSION_SIZE, 0);
 	close(fd);
 
-	return (total);
+	return (session_ctr_empty(sess_ctr) ? 0 : 1);
+}
+
+static int
+session_ctr_incr(pam_handle_t *pamh, const char *user)
+{
+	uint8_t *id;
+	int r;
+
+	id = malloc(PEFS_SESSION_SIZE);
+	if (id == NULL)
+		return (-1);
+	arc4random_buf(id, PEFS_SESSION_SIZE);
+	if (session_ctr_empty(id))
+		arc4random_buf(id, PEFS_SESSION_SIZE);
+	r = pam_set_data(pamh, PAM_PEFS_SESSION, id, openpam_free_data);
+	if (r != PAM_SUCCESS) {
+		free(id);
+		return (-1);
+	}
+	r = session_ctr_update(user, id, true);
+	if (r == -1) {
+		/* Make consequent session_ctr_decr no-op. */
+		memset(id, 0, PEFS_SESSION_SIZE);
+	}
+	return (r);
+}
+
+static int
+session_ctr_decr(pam_handle_t *pamh, const char *user)
+{
+	const uint8_t *id;
+	int r;
+
+	r = pam_get_data(pamh, PAM_PEFS_SESSION, (const void **)&id);
+	if (r != PAM_SUCCESS)
+		return (-1);
+	r = session_ctr_update(user, id, false);
+	pam_set_data(pamh, PAM_PEFS_SESSION, NULL, NULL);
+	return (r);
 }
 
 static int
@@ -469,12 +529,12 @@ pam_sm_open_session(pam_handle_t *pamh, int flags __unused,
 
 out:
 	/* Remove keys from memory */
-	if (kch != NULL)
-		pefs_keychain_free(kch);
+	pam_set_data(pamh, PAM_PEFS_KEYS, NULL, NULL);
 
 	/* Increment login count */
-	if (pam_err == PAM_SUCCESS && opt_delkeys)
-		pefs_session_count_incr(user, true);
+	if (pam_err == PAM_SUCCESS && opt_delkeys) {
+		session_ctr_incr(pamh, user);
+	}
 
 	return (pam_err);
 }
@@ -512,7 +572,7 @@ pam_sm_close_session(pam_handle_t *pamh, int flags __unused,
 
 	/* Decrease login count and remove keys if at zero */
 	pam_err = PAM_SUCCESS;
-	if (pefs_session_count_incr(user, false) == 0) {
+	if (session_ctr_decr(pamh, user) == 0) {
 		pam_err = openpam_borrow_cred(pamh, pwd);
 		if (pam_err != PAM_SUCCESS)
 			return (pam_err);
