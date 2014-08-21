@@ -999,6 +999,16 @@ pefs_rename(struct vop_rename_args *ap)
 		goto out_locked;
 	}
 
+	if (tvp != NULL) {
+		if (fvp->v_type == VDIR && tvp->v_type != VDIR) {
+			error = ENOTDIR;
+			goto out_locked;
+		} else if (fvp->v_type != VDIR && tvp->v_type == VDIR) {
+			error = EISDIR;
+			goto out_locked;
+		}
+	}
+
 	if ((VP_TO_PN(fvp)->pn_flags & PN_HASKEY) == 0) {
 		PEFSDEBUG("pefs_rename: source !HASKEY: %s\n",
 		    fcnp->cn_nameptr);
@@ -1029,40 +1039,33 @@ pefs_rename(struct vop_rename_args *ap)
 		goto out_locked;
 
 	if (tvp != NULL) {
-		if (fvp->v_type == VDIR && tvp->v_type != VDIR) {
-			error = ENOTDIR;
-			goto out_locked;
-		} else if (fvp->v_type != VDIR && tvp->v_type == VDIR) {
-			error = EISDIR;
-			goto out_locked;
-		} else {
-			/*
-			 * We end up having 2 files with same name but
-			 * different tweaks/keys. If target is directory verify
-			 * it's empty. Set ltvp to zero here because we rename
-			 * to new name and then remove old one.
-			 */
-			if (tvp->v_type == VDIR) {
-				error = pefs_isemptydir(tvp, tcnp->cn_cred);
-				if (error != 0)
-					goto out_locked;
-			}
-
-			error = pefs_enccn_get(&txenccn, tdvp, tvp, tcnp);
+		MPASS(fvp->v_type == tvp->v_type);
+		/*
+		 * We end up having 2 files with same name but
+		 * different tweaks/keys. If target is directory verify
+		 * it's empty. Set ltvp to zero here because we rename
+		 * to new name and then remove old one.
+		 */
+		if (tvp->v_type == VDIR) {
+			error = pefs_isemptydir(tvp, tcnp->cn_cred);
 			if (error != 0)
 				goto out_locked;
-
-			ltvp = NULL;
-			VP_TO_PN(tvp)->pn_flags |= PN_WANTRECYCLE;
-			cache_purge(tvp);
-			VOP_UNLOCK(tvp, 0);
-
-			error = VOP_LOOKUP(ltdvp, &ltvp, &tenccn.pec_cn);
-			if (error == 0)
-				panic("pefs_rename: "
-				    "dummy rename target exists");
-			error = 0;
 		}
+
+		error = pefs_enccn_get(&txenccn, tdvp, tvp, tcnp);
+		if (error != 0)
+			goto out_locked;
+
+		ltvp = NULL;
+		VP_TO_PN(tvp)->pn_flags |= PN_WANTRECYCLE;
+		cache_purge(tvp);
+		VOP_UNLOCK(tvp, 0);
+
+		error = VOP_LOOKUP(ltdvp, &ltvp, &tenccn.pec_cn);
+		if (error == 0)
+			panic("pefs_rename: "
+			    "dummy rename target exists");
+		error = 0;
 	}
 
 	MPASS(ltvp == NULL);
