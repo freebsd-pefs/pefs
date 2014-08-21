@@ -84,6 +84,13 @@ __FBSDID("$FreeBSD$");
 
 static int pam_pefs_debug;
 
+/*
+ * bzero() used by sshd is known to overrun the size. Use memset() as a workaround.
+ */
+void bzero(void * ptr, size_t size) {
+	memset(ptr, 0, size);
+}
+
 void
 pefs_warn(const char *fmt, ...)
 {
