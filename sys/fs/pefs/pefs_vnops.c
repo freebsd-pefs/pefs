@@ -1030,6 +1030,15 @@ pefs_rename(struct vop_rename_args *ap)
 		goto out_locked;
 	}
 
+	if ((VP_TO_PN(tdvp)->pn_flags & PN_HASKEY) != 0 &&
+	    VP_TO_PN(fvp)->pn_tkey.ptk_key != VP_TO_PN(tdvp)->pn_tkey.ptk_key) {
+		PEFSDEBUG("pefs_rename: target dir different key: %s %s\n",
+		    fcnp->cn_nameptr, tcnp->cn_nameptr);
+		/* Mismatching target directory key. File should be recreated. */
+		error = EXDEV;
+		goto out_locked;
+	}
+
 	error = pefs_enccn_get(&fenccn, fdvp, fvp, fcnp);
 	if (error != 0)
 		goto out_locked;
