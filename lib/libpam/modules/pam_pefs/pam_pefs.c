@@ -37,9 +37,12 @@
 __FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
+#include <sys/ipc.h>
 #include <sys/ioctl.h>
 #include <sys/wait.h>
+#include <sys/shm.h>
 #include <sys/stat.h>
+#include <sys/types.h>
 
 #include <errno.h>
 #include <fcntl.h>
@@ -71,9 +74,11 @@ __FBSDID("$FreeBSD$");
 
 #define	PEFS_OPT_IGNORE_MISSING		"ignore_missing"
 #define	PEFS_OPT_DELKEYS		"delkeys"
+#define	PEFS_OPT_USE_SHM		"use_shm"
 
 #define	PAM_PEFS_KEYS			"pam_pefs_keys"
 #define	PAM_PEFS_SESSION		"pam_pefs_session"
+#define	PAM_PEFS_SHMID			"pam_pefs_shmid"
 
 #define	PEFS_SESSION_SIZE		16
 #define	PEFS_SESSION_DIR		"/var/run/pefs"
@@ -83,6 +88,7 @@ __FBSDID("$FreeBSD$");
 	(O_RDWR | O_NONBLOCK | O_CREAT | O_EXLOCK)
 
 static int pam_pefs_debug;
+static int pam_pefs_use_shm;
 
 void
 pefs_warn(const char *fmt, ...)
@@ -384,6 +390,73 @@ pam_pefs_freekeys(pam_handle_t *pamh __unused, void *data, int pam_err __unused)
 	free(kch);
 }
 
+static void
+pam_pefs_store_key(pam_handle_t *pamh, struct pefs_keychain_head *kch)
+{
+	int shmid;
+	char *id_hex, *shmdata;
+	if (!pam_pefs_use_shm) {
+		pam_set_data(pamh, PAM_PEFS_KEYS, kch, pam_pefs_freekeys);
+	}
+	else {
+		if ((shmid = shmget(IPC_PRIVATE, sizeof(struct pefs_xkey), SHM_R | SHM_W)) >= 0
+		    && (shmdata = shmat(shmid, 0, 0)) != (void *)-1
+		    && (id_hex = calloc(1, sizeof(int) * 2 + 3)) != NULL) {
+			sprintf(id_hex, "%#.*x", (int)(sizeof(int) * 2), shmid);
+			pam_setenv(pamh, PAM_PEFS_KEYS, id_hex, 1);
+			memcpy(shmdata, &(TAILQ_FIRST(kch)->kc_key), sizeof(struct pefs_xkey));
+			memset(&(TAILQ_FIRST(kch)->kc_key), 0, sizeof(struct pefs_xkey));
+		}
+
+		if (id_hex != NULL) {
+			free(id_hex);
+		}
+		if (shmdata != (void *)-1) {
+			shmdt(shmdata);
+		}
+	}
+}
+
+static int
+pam_pefs_retrieve_key(pam_handle_t *pamh, struct pefs_keychain_head **kch)
+{
+	struct pefs_keychain *entry;
+	int shmid, status;
+	const char *id_hex;
+	char *shmdata;
+
+	if (!pam_pefs_use_shm) {
+		status = pam_get_data(pamh, PAM_PEFS_KEYS, (const void **)&kch);
+		pam_set_data(pamh, PAM_PEFS_KEYS, NULL, NULL);
+	}
+	else {
+		status = PAM_SYSTEM_ERR;
+		if ((id_hex = pam_getenv(pamh, PAM_PEFS_KEYS)) != NULL
+		    && (shmid = strtol(id_hex, NULL, 16)) > 0
+		    && (shmdata = shmat(shmid, 0, 0)) != (void *)-1) {
+			*kch = calloc(1, sizeof(**kch));
+			entry = calloc(1, sizeof(*entry));
+			TAILQ_INIT(*kch);
+			TAILQ_INSERT_HEAD(*kch, entry, kc_entry);
+			memcpy(&(TAILQ_FIRST(*kch)->kc_key), shmdata, sizeof(struct pefs_xkey));
+			memset(shmdata, 0, sizeof(struct pefs_xkey));
+			status = PAM_SUCCESS;
+		}
+
+		if (shmdata != (void *)-1) {
+			shmdt(shmdata);
+		}
+		if (shmid > 0) {
+			shmctl(shmid, IPC_RMID, NULL);
+		}
+		if (id_hex != NULL) {
+			pam_setenv(pamh, PAM_PEFS_KEYS, "", 1);
+		}
+	}
+
+	return status;
+}
+
 PAM_EXTERN int
 pam_sm_authenticate(pam_handle_t *pamh, int flags __unused,
     int argc __unused, const char *argv[] __unused)
@@ -405,6 +478,7 @@ pam_sm_authenticate(pam_handle_t *pamh, int flags __unused,
 		return (PAM_AUTH_ERR);
 
 	pam_pefs_debug = (openpam_get_option(pamh, PAM_OPT_DEBUG) != NULL);
+	pam_pefs_use_shm = (openpam_get_option(pamh, PEFS_OPT_USE_SHM) != NULL);
 
 	chainflags = PEFS_KEYCHAIN_USE;
 	if (openpam_get_option(pamh, PEFS_OPT_IGNORE_MISSING) != NULL)
@@ -447,8 +521,7 @@ retry:
 		pam_err = pam_pefs_getkeys(kch, pwd->pw_dir, passphrase,
 		    chainflags);
 		if (pam_err == PAM_SUCCESS)
-			pam_set_data(pamh, PAM_PEFS_KEYS, kch,
-			    pam_pefs_freekeys);
+			pam_pefs_store_key(pamh, kch);
 		else
 			free(kch);
 
@@ -499,10 +572,10 @@ pam_sm_open_session(pam_handle_t *pamh, int flags __unused,
 		return (PAM_SYSTEM_ERR);
 
 	pam_pefs_debug = (openpam_get_option(pamh, PAM_OPT_DEBUG) != NULL);
+	pam_pefs_use_shm = (openpam_get_option(pamh, PEFS_OPT_USE_SHM) != NULL);
 	opt_delkeys = (openpam_get_option(pamh, PEFS_OPT_DELKEYS) != NULL);
 
-	pam_err = pam_get_data(pamh, PAM_PEFS_KEYS,
-	    (const void **)(void *)&kch);
+	pam_err = pam_pefs_retrieve_key(pamh, &kch);
 	if (pam_err != PAM_SUCCESS || kch == NULL || TAILQ_EMPTY(kch)) {
 		pam_err = PAM_SUCCESS;
 		opt_delkeys = 0;
@@ -528,9 +601,6 @@ pam_sm_open_session(pam_handle_t *pamh, int flags __unused,
 	openpam_restore_cred(pamh);
 
 out:
-	/* Remove keys from memory */
-	pam_set_data(pamh, PAM_PEFS_KEYS, NULL, NULL);
-
 	/* Increment login count */
 	if (pam_err == PAM_SUCCESS && opt_delkeys) {
 		session_ctr_incr(pamh, user);
