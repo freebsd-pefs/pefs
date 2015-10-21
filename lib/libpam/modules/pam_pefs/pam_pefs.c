@@ -427,7 +427,6 @@ pam_pefs_retrieve_key(pam_handle_t *pamh, struct pefs_keychain_head **kch)
 
 	if (!pam_pefs_use_shm) {
 		status = pam_get_data(pamh, PAM_PEFS_KEYS, (const void **)&kch);
-		pam_set_data(pamh, PAM_PEFS_KEYS, NULL, NULL);
 	}
 	else {
 		status = PAM_SYSTEM_ERR;
@@ -439,22 +438,46 @@ pam_pefs_retrieve_key(pam_handle_t *pamh, struct pefs_keychain_head **kch)
 			TAILQ_INIT(*kch);
 			TAILQ_INSERT_HEAD(*kch, entry, kc_entry);
 			memcpy(&(TAILQ_FIRST(*kch)->kc_key), shmdata, sizeof(struct pefs_xkey));
-			memset(shmdata, 0, sizeof(struct pefs_xkey));
 			status = PAM_SUCCESS;
 		}
 
 		if (shmdata != (void *)-1) {
 			shmdt(shmdata);
 		}
+
+	}
+
+	return status;
+}
+
+static void
+pam_pefs_release_key(pam_handle_t *pamh, struct pefs_keychain_head *kch)
+{
+	int shmid;
+	const char *id_hex;
+	char *shmdata;
+
+	if (!pam_pefs_use_shm)
+		pam_set_data(pamh, PAM_PEFS_KEYS, NULL, NULL);
+	else {
+		if ((id_hex = pam_getenv(pamh, PAM_PEFS_KEYS)) != NULL
+		    && (shmid = strtol(id_hex, NULL, 16)) > 0
+		    && (shmdata = shmat(shmid, 0, 0)) != (void *)-1) {
+			memset(shmdata, 0, sizeof(struct pefs_xkey));
+			shmdt(shmdata);
+		}
+
 		if (shmid > 0) {
 			shmctl(shmid, IPC_RMID, NULL);
 		}
 		if (id_hex != NULL) {
 			pam_setenv(pamh, PAM_PEFS_KEYS, "", 1);
 		}
+		if (kch != NULL) {
+			pefs_keychain_free(kch);
+			free(kch);
+		}
 	}
-
-	return status;
 }
 
 PAM_EXTERN int
@@ -601,6 +624,9 @@ pam_sm_open_session(pam_handle_t *pamh, int flags __unused,
 	openpam_restore_cred(pamh);
 
 out:
+	/* Remove keys from memory */
+	pam_pefs_release_key(pamh, kch);
+
 	/* Increment login count */
 	if (pam_err == PAM_SUCCESS && opt_delkeys) {
 		session_ctr_incr(pamh, user);
