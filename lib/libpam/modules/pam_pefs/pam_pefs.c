@@ -406,7 +406,7 @@ pam_pefs_store_key(pam_handle_t *pamh, struct pefs_keychain_head *kch)
 		if ((shmid = shmget(IPC_PRIVATE, sizeof(struct pefs_xkey), SHM_R | SHM_W)) >= 0
 		    && (shmdata = shmat(shmid, 0, 0)) != (void *)-1
 		    && (id_hex = calloc(1, sizeof(int) * 2 + 3)) != NULL) {
-			sprintf(id_hex, "%#.*X", (int)(sizeof(int) * 2), shmid);
+			sprintf(id_hex, "%#.*x", (int)(sizeof(int) * 2), shmid);
 			pam_setenv(pamh, PAM_PEFS_KEYS, id_hex, 1);
 			memcpy(shmdata, &(TAILQ_FIRST(kch)->kc_key), sizeof(struct pefs_xkey));
 			memset(&(TAILQ_FIRST(kch)->kc_key), 0, sizeof(struct pefs_xkey));
