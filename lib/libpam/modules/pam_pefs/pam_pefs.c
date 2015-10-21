@@ -410,10 +410,9 @@ pam_pefs_store_key(pam_handle_t *pamh, struct pefs_keychain_head *kch)
 			pam_setenv(pamh, PAM_PEFS_KEYS, id_hex, 1);
 			memcpy(shmdata, &(TAILQ_FIRST(kch)->kc_key), sizeof(struct pefs_xkey));
 			memset(&(TAILQ_FIRST(kch)->kc_key), 0, sizeof(struct pefs_xkey));
+			free(id_hex);
 		}
 
-		if (id_hex != NULL)
-			free(id_hex);
 		if (shmdata != (void *)-1)
 			shmdt(shmdata);
 	}
@@ -439,12 +438,9 @@ pam_pefs_retrieve_key(pam_handle_t *pamh, struct pefs_keychain_head **kch)
 			TAILQ_INIT(*kch);
 			TAILQ_INSERT_HEAD(*kch, entry, kc_entry);
 			memcpy(&(TAILQ_FIRST(*kch)->kc_key), shmdata, sizeof(struct pefs_xkey));
+			shmdt(shmdata);
 			status = PAM_SUCCESS;
 		}
-
-		if (shmdata != (void *)-1)
-			shmdt(shmdata);
-
 	}
 
 	return status;
