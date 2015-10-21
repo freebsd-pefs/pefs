@@ -427,7 +427,7 @@ pam_pefs_retrieve_key(pam_handle_t *pamh, struct pefs_keychain_head **kch)
 	char *shmdata;
 
 	if (!pam_pefs_use_shm)
-		status = pam_get_data(pamh, PAM_PEFS_KEYS, (const void **)&kch);
+		status = pam_get_data(pamh, PAM_PEFS_KEYS, (const void **)kch);
 	else {
 		status = PAM_SYSTEM_ERR;
 		if ((id_hex = pam_getenv(pamh, PAM_PEFS_KEYS)) != NULL
