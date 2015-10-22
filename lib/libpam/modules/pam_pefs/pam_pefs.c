@@ -393,19 +393,31 @@ pam_pefs_freekeys(pam_handle_t *pamh __unused, void *data, int pam_err __unused)
 static void
 pam_pefs_store_key(pam_handle_t *pamh, struct pefs_keychain_head *kch)
 {
-	int shmid;
-	char *id_hex, *shmdata;
+	struct pefs_keychain *kc;
+	struct pefs_xkey *shmkey;
+	size_t shmsize;
+	int keycnt, shmid;
+	char *id_hex;
+	void *shmdata;
 	if (!pam_pefs_use_shm) {
 		pam_set_data(pamh, PAM_PEFS_KEYS, kch, pam_pefs_freekeys);
 	}
 	else {
-		if ((shmid = shmget(IPC_PRIVATE, sizeof(struct pefs_xkey), SHM_R | SHM_W)) >= 0
+		keycnt = 0;
+		TAILQ_FOREACH(kc, kch, kc_entry)
+			keycnt++;
+		shmsize = sizeof(int) + (sizeof(*shmkey) * keycnt);
+
+		if ((shmid = shmget(IPC_PRIVATE, shmsize, SHM_R | SHM_W)) > 0
 		    && (shmdata = shmat(shmid, 0, 0)) != (void *)-1
 		    && (id_hex = calloc(1, sizeof(int) * 2 + 3)) != NULL) {
 			sprintf(id_hex, "%#.*x", (int)(sizeof(int) * 2), shmid);
 			pam_setenv(pamh, PAM_PEFS_KEYS, id_hex, 1);
-			memcpy(shmdata, &(TAILQ_FIRST(kch)->kc_key), sizeof(struct pefs_xkey));
 			free(id_hex);
+			*(int *)shmdata = keycnt;
+			shmkey = shmdata + sizeof(keycnt);
+			TAILQ_FOREACH(kc, kch, kc_entry)
+				memcpy(shmkey++, &(kc->kc_key), sizeof(*shmkey));
 		}
 
 		if (shmdata != (void *)-1) {
@@ -420,26 +432,45 @@ pam_pefs_store_key(pam_handle_t *pamh, struct pefs_keychain_head *kch)
 static int
 pam_pefs_retrieve_key(pam_handle_t *pamh, struct pefs_keychain_head **kch)
 {
-	struct pefs_keychain *entry;
-	int shmid, status;
+	struct pefs_keychain *kc;
+	struct pefs_xkey *shmkey;
+	int keycnt, shmid, status;
 	const char *id_hex;
-	char *shmdata;
+	void *shmdata;
 
 	if (!pam_pefs_use_shm) {
-		status = pam_get_data(pamh, PAM_PEFS_KEYS, (const void **)&kch);
+		status = pam_get_data(pamh, PAM_PEFS_KEYS, (const void **)kch);
 	}
 	else {
 		status = PAM_SYSTEM_ERR;
 		if ((id_hex = pam_getenv(pamh, PAM_PEFS_KEYS)) != NULL
 		    && (shmid = strtol(id_hex, NULL, 16)) > 0
-		    && (shmdata = shmat(shmid, 0, 0)) != (void *)-1) {
-			*kch = calloc(1, sizeof(**kch));
-			entry = calloc(1, sizeof(*entry));
-			TAILQ_INIT(*kch);
-			TAILQ_INSERT_HEAD(*kch, entry, kc_entry);
-			memcpy(&(TAILQ_FIRST(*kch)->kc_key), shmdata, sizeof(struct pefs_xkey));
-			shmdt(shmdata);
+		    && (shmdata = shmat(shmid, 0, 0)) != (void *)-1
+		    && (*kch = calloc(1, sizeof(**kch))) != NULL) {
 			status = PAM_SUCCESS;
+			TAILQ_INIT(*kch);
+			shmkey = shmdata + sizeof(keycnt);
+			for (keycnt = *(int *)shmdata; keycnt; keycnt--) {
+				if ((kc = calloc(1, sizeof(*kc))) == NULL) {
+					while (!TAILQ_EMPTY(*kch)) {
+						kc = TAILQ_FIRST(*kch);
+						TAILQ_REMOVE(*kch, kc, kc_entry);
+						free(kc);
+					}
+
+					free(*kch);
+					*kch = NULL;
+					status = PAM_SYSTEM_ERR;
+					break;
+				}
+
+				memcpy(&(kc->kc_key), shmkey++, sizeof(*shmkey));
+				TAILQ_INSERT_HEAD(*kch, kc, kc_entry);
+			}
+		}
+
+		if (shmdata != (void *)-1) {
+			shmdt(shmdata);
 		}
 	}
 
@@ -449,9 +480,10 @@ pam_pefs_retrieve_key(pam_handle_t *pamh, struct pefs_keychain_head **kch)
 static void
 pam_pefs_release_key(pam_handle_t *pamh, struct pefs_keychain_head *kch)
 {
-	int shmid;
+	size_t shmsize;
+	int keycnt, shmid;
 	const char *id_hex;
-	char *shmdata;
+	void *shmdata;
 
 	if (!pam_pefs_use_shm)
 		pam_set_data(pamh, PAM_PEFS_KEYS, NULL, NULL);
@@ -459,7 +491,10 @@ pam_pefs_release_key(pam_handle_t *pamh, struct pefs_keychain_head *kch)
 		if ((id_hex = pam_getenv(pamh, PAM_PEFS_KEYS)) != NULL
 		    && (shmid = strtol(id_hex, NULL, 16)) > 0
 		    && (shmdata = shmat(shmid, 0, 0)) != (void *)-1) {
-			memset(shmdata, 0, sizeof(struct pefs_xkey));
+			keycnt = *(int *)shmdata;
+			shmsize = sizeof(keycnt)
+			    + (sizeof(struct pefs_xkey) * keycnt);
+			memset(shmdata, 0, shmsize);
 			shmdt(shmdata);
 		}
 
