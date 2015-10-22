@@ -409,12 +409,14 @@ pam_pefs_store_key(pam_handle_t *pamh, struct pefs_keychain_head *kch)
 			sprintf(id_hex, "%#.*x", (int)(sizeof(int) * 2), shmid);
 			pam_setenv(pamh, PAM_PEFS_KEYS, id_hex, 1);
 			memcpy(shmdata, &(TAILQ_FIRST(kch)->kc_key), sizeof(struct pefs_xkey));
-			memset(&(TAILQ_FIRST(kch)->kc_key), 0, sizeof(struct pefs_xkey));
 			free(id_hex);
 		}
 
 		if (shmdata != (void *)-1)
 			shmdt(shmdata);
+
+		pefs_keychain_free(kch);
+		free(kch);
 	}
 }
 
