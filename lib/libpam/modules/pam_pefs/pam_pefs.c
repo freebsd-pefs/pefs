@@ -423,6 +423,8 @@ pam_pefs_store_key(pam_handle_t *pamh, struct pefs_keychain_head *kch)
 			TAILQ_FOREACH(kc, kch, kc_entry)
 				memcpy(shmkey++, &(kc->kc_key), sizeof(*shmkey));
 		}
+		else
+			pefs_warn("failed to allocate shared memory for key");
 
 		if (shmdata != (void *)-1)
 			shmdt(shmdata);
@@ -471,6 +473,9 @@ pam_pefs_retrieve_key(pam_handle_t *pamh, struct pefs_keychain_head **kch)
 			}
 		}
 
+		if (status != PAM_SUCCESS)
+			pefs_warn("failed to retrieve key from shared memory");
+
 		if (shmdata != (void *)-1)
 			shmdt(shmdata);
 	}
@@ -498,6 +503,8 @@ pam_pefs_release_key(pam_handle_t *pamh, struct pefs_keychain_head *kch)
 			memset(shmdata, 0, shmsize);
 			shmdt(shmdata);
 		}
+		else
+			pefs_warn("failed to release shared memory for key");
 
 		if (shmid > 0)
 			shmctl(shmid, IPC_RMID, NULL);
