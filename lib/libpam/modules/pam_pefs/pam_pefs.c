@@ -412,7 +412,7 @@ pam_pefs_store_key(pam_handle_t *pamh, struct pefs_keychain_head *kch)
 			keycnt++;
 		shmsize = sizeof(int) + (sizeof(*shmkey) * keycnt);
 
-		if ((shmid = shmget(IPC_PRIVATE, shmsize, SHM_R | SHM_W)) >= 0
+		if ((shmid = shmget(IPC_PRIVATE, shmsize, SHM_R | SHM_W)) > 0
 		    && (shmdata = shmat(shmid, 0, 0)) != (void *)-1
 		    && (id_hex = calloc(1, sizeof(int) * 2 + 3)) != NULL) {
 			sprintf(id_hex, "%#.*x", (int)(sizeof(int) * 2), shmid);
