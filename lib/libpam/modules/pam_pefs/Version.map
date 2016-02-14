@@ -1,6 +1,7 @@
 {
 	local:
 		SHA*;
+		_libmd_SHA*;
 		crypto*;
 		hmac*;
 		pbkdf2*;

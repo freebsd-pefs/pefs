@@ -29,7 +29,7 @@
 #ifndef	_SYS_CRYPTO_HMAC_SHA512_
 #define	_SYS_CRYPTO_HMAC_SHA512_
 
-#include <crypto/sha2/sha2.h>
+#include <crypto/sha2/sha512.h>
 
 struct hmac_sha512_ctx {
 	SHA512_CTX	shactx;
