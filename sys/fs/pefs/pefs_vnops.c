@@ -2785,6 +2785,23 @@ pefs_pathconf(struct vop_pathconf_args *ap)
 	return (0);
 }
 
+#if __FreeBSD_version >= 1100091
+static int
+pefs_bmap(struct vop_bmap_args *ap)
+{
+
+	if (ap->a_bop != NULL)
+		*ap->a_bop = &ap->a_vp->v_bufobj;
+	if (ap->a_bnp != NULL)
+		*ap->a_bnp = ap->a_bn;
+	if (ap->a_runp != NULL)
+		*ap->a_runp = 0;
+	if (ap->a_runb != NULL)
+		*ap->a_runb = 0;
+	return (EOPNOTSUPP);
+}
+#endif
+
 /*
  * Global vfs data structures
  */
@@ -2821,7 +2838,11 @@ struct vop_vector pefs_vnodeops = {
 	.vop_read =		pefs_read,
 	.vop_write =		pefs_write,
 	.vop_strategy =		VOP_PANIC,
+#if __FreeBSD_version >= 1100091
+	.vop_bmap =		pefs_bmap,
+#else
 	.vop_bmap =		VOP_EOPNOTSUPP,
+#endif
 	.vop_getpages =		vop_stdgetpages,
 	.vop_putpages =		vop_stdputpages,
 	.vop_fsync =		vop_stdfsync,
