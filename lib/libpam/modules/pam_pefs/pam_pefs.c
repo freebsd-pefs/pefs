@@ -1,7 +1,7 @@
 /*-
  * Copyright (c) 2003 Networks Associates Technology, Inc.
  * Copyright (c) 2009 Gleb Kurtsou <gleb@FreeBSD.org>
- * Copyright (c) 2011,2015 David Naylor <dbn@FreeBSD.org>
+ * Copyright (c) 2011 David Naylor <dbn@FreeBSD.org>
  * All rights reserved.
  *
  * This software was developed for the FreeBSD Project by ThinkSec AS and
@@ -283,8 +283,7 @@ pam_pefs_checkfs(const char *homedir)
 	char abshomedir[MAXPATHLEN];
 
 	if (realpath(homedir, abshomedir) == NULL) {
-		pefs_warn("unable to resulve home dir: %s", homedir);
-		return (PAM_USER_UNKNOWN);
+		strncpy(abshomedir, homedir, sizeof(abshomedir));
 	}
 	if (pefs_getfsroot(abshomedir, 0, fsroot, sizeof(fsroot)) != 0) {
 		pefs_warn("file system is not mounted: %s", abshomedir);
