@@ -170,7 +170,9 @@ pefs_enccn_alloc(struct pefs_enccn *pec, struct componentname *cnp)
 	pec->pec_cn.cn_flags |= HASBUF;
 	pec->pec_cn.cn_pnbuf = pec->pec_buf;
 	pec->pec_cn.cn_nameptr = pec->pec_buf;
+#if __FreeBSD_version < 1100102
 	pec->pec_cn.cn_consume = 0;
+#endif
 	pec->pec_cn.cn_namelen = 0;
 }
 
