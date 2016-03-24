@@ -33,7 +33,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/lock.h>
 #include <sys/malloc.h>
 #include <sys/mount.h>
-#include <sys/mutex.h>
+#include <sys/rwlock.h>
 #include <sys/namei.h>
 #include <sys/dirent.h>
 #include <sys/hash.h>
@@ -59,7 +59,7 @@ __FBSDID("$FreeBSD$");
 #define	DIRCACHE_ASSERT(pd)	MPASS(LIST_EMPTY(&(pd)->pd_heads[0]) || \
 		LIST_EMPTY(&(pd)->pd_heads[1]))
 
-static struct mtx		dircache_mtx;
+static struct rwlock		dircache_lock;
 
 static struct pefs_dircache_listhead *dircache_tbl;
 static struct pefs_dircache_listhead *dircache_enctbl;
@@ -104,13 +104,13 @@ pefs_dircache_init(void)
 	    &pefs_dircache_hashmask);
 	dircache_enctbl = hashinit(dircache_buckets, M_PEFSHASH,
 	    &pefs_dircache_hashmask);
-	mtx_init(&dircache_mtx, "pefs_dircache_mtx", NULL, MTX_DEF);
+	rw_init(&dircache_lock, "pefs_dircache_lock");
 }
 
 void
 pefs_dircache_uninit(void)
 {
-	mtx_destroy(&dircache_mtx);
+	rw_destroy(&dircache_lock);
 	free(dircache_tbl, M_PEFSHASH);
 	free(dircache_enctbl, M_PEFSHASH);
 	uma_zdestroy(dircache_zone);
@@ -182,11 +182,11 @@ dircache_entry_free(struct pefs_dircache_entry *pde)
 	    pde->pde_name, pde->pde_encname);
 	pefs_key_release(pde->pde_tkey.ptk_key);
 	LIST_REMOVE(pde, pde_dir_entry);
-	mtx_lock(&dircache_mtx);
+	rw_wlock(&dircache_lock);
 	LIST_REMOVE(pde, pde_hash_entry);
 	LIST_REMOVE(pde, pde_enchash_entry);
 	dircache_entries--;
-	mtx_unlock(&dircache_mtx);
+	rw_wunlock(&dircache_lock);
 	uma_zfree(dircache_entry_zone, pde);
 }
 
@@ -271,13 +271,13 @@ pefs_dircache_insert(struct pefs_dircache *pd, struct pefs_tkey *ptk,
 	/* Insert into list and set pge_gen */
 	dircache_update(pde, 0);
 
-	mtx_lock(&dircache_mtx);
+	rw_wlock(&dircache_lock);
 	head = &dircache_tbl[pde->pde_namehash & pefs_dircache_hashmask];
 	LIST_INSERT_HEAD(head, pde, pde_hash_entry);
 	head = &dircache_enctbl[pde->pde_encnamehash & pefs_dircache_hashmask];
 	LIST_INSERT_HEAD(head, pde, pde_enchash_entry);
 	dircache_entries++;
-	mtx_unlock(&dircache_mtx);
+	rw_wunlock(&dircache_lock);
 
 	PEFSDEBUG("pefs_dircache_insert: hash=%x enchash=%x: %s -> %s\n",
 	    pde->pde_namehash, pde->pde_encnamehash,
@@ -300,20 +300,20 @@ pefs_dircache_lookup(struct pefs_dircache *pd, char const *name,
 
 	h = dircache_hashname(pd, name, name_len);
 	head = &dircache_tbl[h & pefs_dircache_hashmask];
-	mtx_lock(&dircache_mtx);
+	rw_rlock(&dircache_lock);
 	LIST_FOREACH(pde, head, pde_hash_entry) {
 		if (pde->pde_namehash == h &&
 		    pde->pde_dircache == pd &&
 		    pde->pde_gen == pd->pd_gen &&
 		    pde->pde_namelen == name_len &&
 		    memcmp(pde->pde_name, name, name_len) == 0) {
-			mtx_unlock(&dircache_mtx);
+			rw_runlock(&dircache_lock);
 			PEFSDEBUG("pefs_dircache_lookup: found %s -> %s\n",
 			    pde->pde_name, pde->pde_encname);
 			return (pde);
 		}
 	}
-	mtx_unlock(&dircache_mtx);
+	rw_runlock(&dircache_lock);
 	PEFSDEBUG("pefs_dircache_lookup: not found %s\n", name);
 	return (NULL);
 }
@@ -328,19 +328,19 @@ pefs_dircache_enclookup(struct pefs_dircache *pd, char const *encname,
 
 	h = dircache_hashname(pd, encname, encname_len);
 	head = &dircache_enctbl[h & pefs_dircache_hashmask];
-	mtx_lock(&dircache_mtx);
+	rw_rlock(&dircache_lock);
 	LIST_FOREACH(pde, head, pde_enchash_entry) {
 		if (pde->pde_encnamehash == h &&
 		    pde->pde_dircache == pd &&
 		    pde->pde_encnamelen == encname_len &&
 		    memcmp(pde->pde_encname, encname, encname_len) == 0) {
-			mtx_unlock(&dircache_mtx);
+			rw_runlock(&dircache_lock);
 			PEFSDEBUG("pefs_dircache_enclookup: found %s -> %s\n",
 			    pde->pde_name, pde->pde_encname);
 			return (pde);
 		}
 	}
-	mtx_unlock(&dircache_mtx);
+	rw_runlock(&dircache_lock);
 	PEFSDEBUG("pefs_dircache_enclookup: not found %s\n", encname);
 	return (NULL);
 }
