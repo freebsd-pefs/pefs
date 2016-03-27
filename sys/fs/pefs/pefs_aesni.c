@@ -148,13 +148,13 @@ pefs_aesni_enter(struct pefs_session *xses)
 		return;
 	}
 
-	sched_pin();
-	ses->fpu_ctx = DPCPU_GET(pefs_aesni_fpu);
+	critical_enter();
+	ses->fpu_ctx = (void *)atomic_swap_ptr(
+	    (volatile void *)DPCPU_PTR(pefs_aesni_fpu), (uintptr_t)NULL);
 	if (ses->fpu_ctx != NULL) {
 		ses->td = curthread;
 		ses->fpu_cpuid = curcpu;
-		DPCPU_ID_SET(ses->fpu_cpuid, pefs_aesni_fpu, NULL);
-		sched_unpin();
+		critical_exit();
 		error = fpu_kern_enter(ses->td, ses->fpu_ctx, FPU_KERN_NORMAL);
 		if (error == 0) {
 			ses->fpu_saved = 1;
@@ -162,7 +162,7 @@ pefs_aesni_enter(struct pefs_session *xses)
 		}
 		DPCPU_ID_SET(ses->fpu_cpuid, pefs_aesni_fpu, ses->fpu_ctx);
 	} else
-		sched_unpin();
+		critical_exit();
 	ses->fpu_saved = -1;
 }
 
@@ -185,11 +185,11 @@ pefs_aesni_uninit(struct pefs_alg *pa)
 	u_int cpuid;
 
 	CPU_FOREACH(cpuid) {
-		fpu_ctx = DPCPU_ID_GET(cpuid, pefs_aesni_fpu);
-		if (fpu_ctx != NULL) {
+		fpu_ctx = (void *)atomic_swap_ptr(
+		    (volatile void *)DPCPU_ID_PTR(cpuid, pefs_aesni_fpu),
+		    (uintptr_t)NULL);
+		if (fpu_ctx != NULL)
 			fpu_kern_free_ctx(fpu_ctx);
-			DPCPU_ID_SET(cpuid, pefs_aesni_fpu, NULL);
-		}
 	}
 }
 
