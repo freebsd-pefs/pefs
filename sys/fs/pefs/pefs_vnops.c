@@ -513,34 +513,74 @@ loop:
 }
 
 static int
+pefs_lookup_lower(struct vnode *dvp, struct vnode **lvpp,
+    struct componentname *cnp)
+{
+	struct vnode *ldvp, *lvp;
+	int error;
+
+	lvp = NULL;
+	ldvp = PEFS_LOWERVP(dvp);
+
+	/*
+	 * See r269708 for nullfs.
+	 * VOP_LOOKUP() on lower vnode may unlock ldvp, which allows
+	 * dvp to be reclaimed due to shared v_vnlock.  Check for the
+	 * doomed state and return error.
+	 */
+	error = VOP_LOOKUP(ldvp, &lvp, cnp);
+
+	if ((error == 0 || error == EJUSTRETURN) &&
+	    (dvp->v_iflag & VI_DOOMED) != 0) {
+		error = ENOENT;
+		if (lvp != NULL)
+			vput(lvp);
+		VOP_UNLOCK(ldvp, 0);
+		vn_lock(dvp, LK_EXCLUSIVE | LK_RETRY);
+	} else if (error == 0) {
+		*lvpp = lvp;
+	}
+
+	return (error);
+}
+
+static int
 pefs_lookup(struct vop_cachedlookup_args *ap)
 {
 	struct componentname *cnp = ap->a_cnp;
 	struct vnode *vp = NULL;
 	struct vnode *lvp = NULL;
 	struct vnode *dvp = ap->a_dvp;
-	struct vnode *ldvp = PEFS_LOWERVP(dvp);
+	struct vnode *ldvp;
 	struct pefs_enccn enccn;
-	struct pefs_node *dpn = VP_TO_PN(dvp);
-	uint64_t flags = cnp->cn_flags;
+	struct pefs_node *dpn;
+	struct mount *mp;
+	uint64_t flags;
 	int nokey_lookup, skip_lookup;
 	int error;
 
 	PEFSDEBUG("pefs_lookup: op=%lx, name=%.*s\n",
 	    cnp->cn_nameiop, (int)cnp->cn_namelen, cnp->cn_nameptr);
 
+	ldvp = PEFS_LOWERVP(dvp);
+	dpn = VP_TO_PN(dvp);
+	mp = dvp->v_mount;
+	flags = cnp->cn_flags;
+
 	pefs_enccn_init(&enccn);
 
 	if ((flags & ISLASTCN) &&
-	    ((dvp->v_mount->mnt_flag & MNT_RDONLY) || pefs_no_keys(dvp)) &&
+	    ((mp->mnt_flag & MNT_RDONLY) || pefs_no_keys(dvp)) &&
 	    (cnp->cn_nameiop != LOOKUP))
 		return (EROFS);
+
+	vhold(dvp);
 
 	nokey_lookup = 0;
 	skip_lookup = (flags & ISDOTDOT) ||
 	    pefs_name_skip(cnp->cn_nameptr, cnp->cn_namelen);
 	if (((dpn->pn_flags & PN_HASKEY) == 0 || skip_lookup)) {
-		error = VOP_LOOKUP(ldvp, &lvp, cnp);
+		error = pefs_lookup_lower(dvp, &lvp, cnp);
 		if (skip_lookup || error == 0 ||
 		    pefs_no_keys(dvp))
 			nokey_lookup = 1;
@@ -569,7 +609,7 @@ pefs_lookup(struct vop_cachedlookup_args *ap)
 		}
 
 		if (error == 0) {
-			error = VOP_LOOKUP(ldvp, &lvp, &enccn.pec_cn);
+			error = pefs_lookup_lower(dvp, &lvp, &enccn.pec_cn);
 			if (error == 0 || error == EJUSTRETURN)
 				cnp->cn_flags = (cnp->cn_flags & HASBUF) |
 				    (enccn.pec_cn.cn_flags & ~HASBUF);
@@ -594,11 +634,10 @@ pefs_lookup(struct vop_cachedlookup_args *ap)
 			vrele(lvp);
 		} else {
 			if (nokey_lookup)
-				error = pefs_node_get_nokey(dvp->v_mount, lvp,
-				    &vp);
+				error = pefs_node_get_nokey(mp, lvp, &vp);
 			else
-				error = pefs_node_get_haskey(dvp->v_mount, lvp,
-				    &vp, &enccn.pec_tkey);
+				error = pefs_node_get_haskey(mp, lvp, &vp,
+				    &enccn.pec_tkey);
 			if (error != 0) {
 				vput(lvp);
 			} else {
@@ -610,6 +649,8 @@ pefs_lookup(struct vop_cachedlookup_args *ap)
 		}
 	} else
 		*ap->a_vpp = NULL;
+
+	vdrop(dvp);
 
 	if (!nokey_lookup)
 		pefs_enccn_free(&enccn);
