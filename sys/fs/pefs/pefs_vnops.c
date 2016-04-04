@@ -80,6 +80,17 @@ struct pefs_enccn {
 	struct pefs_tkey	pec_tkey;
 };
 
+static u_long pefs_rename_restarts;
+SYSCTL_DECL(_vfs_pefs);
+SYSCTL_ULONG(_vfs_pefs, OID_AUTO, rename_restarts, CTLFLAG_RD,
+    &pefs_rename_restarts, 0,
+    "Number of lock failure attempts in rename");
+
+static u_long pefs_xlock_restarts;
+SYSCTL_ULONG(_vfs_pefs, OID_AUTO, xlock_restarts, CTLFLAG_RD,
+    &pefs_xlock_restarts, 0,
+    "Number of lock failure attempts due to rename in progress");
+
 static int	pefs_read_int(struct vnode *vp, struct uio *uio, int ioflag,
 		    struct ucred *cred, u_quad_t fsize);
 static int	pefs_write_int(struct vnode *vp, struct uio *uio, int ioflag,
@@ -940,59 +951,73 @@ pefs_close(struct vop_close_args *ap)
 }
 
 static int
-pefs_isemptydir_parsedir(void *mem, size_t sz)
+pefs_rename_xlock_enter(struct vnode *vp)
 {
-	struct dirent *de;
+	volatile u_int *xlockp;
+	int error;
 
-	for (de = (struct dirent*) mem; sz > DIRENT_MINSIZE;
-			sz -= de->d_reclen,
-			de = (struct dirent *)(((caddr_t)de) + de->d_reclen)) {
-		MPASS(de->d_reclen <= sz);
-		if (de->d_reclen == 0)
-			break;
-		if (de->d_type == DT_WHT || de->d_fileno == 0)
-			continue;
-		if (de->d_name[0] == '.' && (de->d_namlen == 1 ||
-		    (de->d_namlen == 2 && de->d_name[1] == '.')))
-			continue;
-		return (ENOTEMPTY);
-	}
-	return (0);
+	MPASS(vp->v_vnlock != &vp->v_lock);
+	ASSERT_VOP_ELOCKED(vp, "pefs_lock_rename");
+
+	VI_LOCK(vp);
+
+	xlockp = &VP_TO_PN(vp)->pn_rename_xlock;
+	atomic_add_acq_int(xlockp, 1);
+
+	error = lockmgr(&vp->v_lock, LK_EXCLUSIVE | LK_INTERLOCK | LK_NOWAIT,
+	    VI_MTX(vp));
+	return (error);
+
 }
 
 static int
-pefs_isemptydir(struct vnode *dvp, struct ucred *cred)
+pefs_rename_xlock_exit(struct vnode *vp)
 {
-	struct vnode *ldvp = PEFS_LOWERVP(dvp);
-	struct uio *uio;
-	struct pefs_node *dpn = VP_TO_PN(dvp);
-	struct pefs_chunk pc;
-	off_t offset;
-	int eofflag, error;
+	volatile u_int *xlockp;
+	int error;
 
-	MPASS(dvp->v_type == VDIR);
+	MPASS(vp->v_vnlock != &vp->v_lock);
+	ASSERT_VOP_ELOCKED(vp, "pefs_rename_xlock_exit");
+	lockmgr_assert(&vp->v_lock, KA_XLOCKED);
 
-	offset = 0;
-	eofflag = 0;
-	error = 0;
-	ldvp = PEFS_LOWERVP(dvp);
-	pefs_chunk_create(&pc, dpn, PEFS_SECTOR_SIZE);
-	while (!eofflag) {
-		uio = pefs_chunk_uio(&pc, offset, UIO_READ);
-		error = VOP_READDIR(ldvp, uio, cred, &eofflag, NULL, NULL);
-		if (error != 0)
-			break;
-		offset = uio->uio_offset;
-		if (pc.pc_size == uio->uio_resid)
-			break;
-		pefs_chunk_setsize(&pc, pc.pc_size - uio->uio_resid);
-		error = pefs_isemptydir_parsedir(pc.pc_base, pc.pc_size);
-		if (error != 0)
-			break;
-		pefs_chunk_restore(&pc);
-	}
-	pefs_chunk_free(&pc, dpn);
+	VI_LOCK(vp);
+
+	xlockp = &VP_TO_PN(vp)->pn_rename_xlock;
+	atomic_subtract_acq_int(xlockp, 1);
+
+	error = lockmgr(&vp->v_lock, LK_RELEASE | LK_INTERLOCK, VI_MTX(vp));
 	return (error);
+}
+
+static void
+pefs_rename_xlock_abort(struct vnode *vp)
+{
+	volatile u_int *xlockp;
+
+	xlockp = &VP_TO_PN(vp)->pn_rename_xlock;
+	atomic_subtract_acq_int(xlockp, 1);
+}
+
+static int
+pefs_rename_relock(struct vnode *tdvp)
+{
+	int error;
+
+	atomic_add_long(&pefs_rename_restarts, 1);
+
+	VOP_UNLOCK(tdvp, 0);
+	error = lockmgr(&tdvp->v_lock, LK_EXCLUSIVE, VI_MTX(tdvp));
+	if (error != 0)
+		return (error);
+	error = vn_lock(tdvp, LK_EXCLUSIVE);
+	if (error != 0) {
+		lockmgr(&tdvp->v_lock, LK_RELEASE, VI_MTX(tdvp));
+		return (error);
+	}
+	ASSERT_VOP_ELOCKED(tdvp, "pefs_rename_relock");
+	lockmgr_assert(&tdvp->v_lock, KA_XLOCKED);
+
+	return (0);
 }
 
 static int
@@ -1011,6 +1036,7 @@ pefs_rename(struct vop_rename_args *ap)
 	struct pefs_enccn fenccn;
 	struct pefs_enccn tenccn;
 	struct pefs_enccn txenccn;
+	struct mount *mp = NULL;
 	int error;
 
 	KASSERT(tcnp->cn_flags & (SAVENAME | SAVESTART),
@@ -1085,77 +1111,97 @@ pefs_rename(struct vop_rename_args *ap)
 	error = pefs_enccn_get(&fenccn, fdvp, fvp, fcnp);
 	if (error != 0)
 		goto out_locked;
-	error = pefs_enccn_create(&tenccn, fenccn.pec_tkey.ptk_key,
-	    fenccn.pec_tkey.ptk_tweak, tcnp);
-	if (error != 0)
-		goto out_locked;
 
-	if (tvp != NULL) {
-		MPASS(fvp->v_type == tvp->v_type);
+	if (tvp != NULL && tvp->v_type != VDIR) {
+		MPASS(fvp->v_type != VDIR);
 		/*
 		 * We end up having 2 files with same name but
-		 * different tweaks/keys. If target is directory verify
-		 * it's empty. Set ltvp to zero here because we rename
-		 * to new name and then remove old one.
+		 * different tweaks. Acquire rename interlock
+		 * to avoid race.
 		 */
-		if (tvp->v_type == VDIR) {
-			error = pefs_isemptydir(tvp, tcnp->cn_cred);
-			if (error != 0)
-				goto out_locked;
-		}
+
+		error = pefs_enccn_create(&tenccn, fenccn.pec_tkey.ptk_key,
+		    fenccn.pec_tkey.ptk_tweak, tcnp);
+		if (error != 0)
+			goto out_locked;
 
 		error = pefs_enccn_get(&txenccn, tdvp, tvp, tcnp);
 		if (error != 0)
 			goto out_locked;
 
-		ltvp = NULL;
 		VP_TO_PN(tvp)->pn_flags |= PN_WANTRECYCLE;
 		cache_purge(tvp);
 		VOP_UNLOCK(tvp, 0);
-
-		error = VOP_LOOKUP(ltdvp, &ltvp, &tenccn.pec_cn);
-		if (error == 0)
-			panic("pefs_rename: "
-			    "dummy rename target exists");
-		error = 0;
+		error = pefs_rename_xlock_enter(tdvp);
+		if (error != 0) {
+			PEFSDEBUG("pefs_rename: failed to acquire interlock\n");
+			error = vfs_busy(tdvp->v_mount, 0);
+			if (error != 0)
+			{
+				pefs_rename_xlock_abort(tdvp);
+				VOP_UNLOCK(tdvp, 0);
+				goto out_unlocked;
+			}
+			mp = tdvp->v_mount;
+			error = pefs_rename_relock(tdvp);
+			PEFSDEBUG("pefs_rename: relock result: %d\n", error);
+			if (error != 0) {
+				pefs_rename_xlock_abort(tdvp);
+				goto out_unlocked;
+			}
+		}
+		ltvp = NULL;
+	} else if (tvp != NULL && tvp->v_type == VDIR) {
+		error = pefs_enccn_get(&tenccn, tdvp, tvp, tcnp);
+		if (error != 0)
+			goto out_locked;
+		VP_TO_PN(tvp)->pn_flags |= PN_WANTRECYCLE;
+	} else {
+		error = pefs_enccn_create(&tenccn, fenccn.pec_tkey.ptk_key,
+		    fenccn.pec_tkey.ptk_tweak, tcnp);
+		if (error != 0)
+			goto out_locked;
 	}
 
-	MPASS(ltvp == NULL);
 	MPASS(error == 0);
 	ASSERT_VOP_LOCKED(ltdvp, "pefs_rename");
 
 	vref(lfdvp);
 	vref(lfvp);
 	vref(ltdvp);
+	if (ltvp != NULL)
+		vref(ltvp);
 
-	error = VOP_RENAME(lfdvp, lfvp, &fenccn.pec_cn, ltdvp, NULL,
+	error = VOP_RENAME(lfdvp, lfvp, &fenccn.pec_cn, ltdvp, ltvp,
 	    &tenccn.pec_cn);
 
 	if (error == 0) {
-		if (tvp != NULL) {
+		cache_purge(fdvp);
+		cache_purge(fvp);
+	}
+
+	if (tvp != NULL && tvp->v_type != VDIR) {
+		if (error == 0) {
 			/*
 			 * Remove dummy target file.
 			 */
-			ASSERT_VOP_UNLOCKED(tdvp, "pefs_rename");
-			ASSERT_VOP_UNLOCKED(tvp, "pefs_rename");
-			vn_lock(tdvp, LK_EXCLUSIVE | LK_RETRY);
+			ASSERT_VOP_UNLOCKED(ltdvp, "pefs_rename");
+			ASSERT_VOP_UNLOCKED(ltvp, "pefs_rename");
+			lockmgr_assert(&tdvp->v_lock, KA_XLOCKED);
+
+			vn_lock(ltdvp, LK_EXCLUSIVE | LK_RETRY);
 			txenccn.pec_cn.cn_nameiop = DELETE;
 			error = VOP_LOOKUP(ltdvp, &ltvp, &txenccn.pec_cn);
 			if (error == 0) {
-				if (tvp->v_type != VDIR)
-					error = VOP_REMOVE(ltdvp, ltvp,
-					    &txenccn.pec_cn);
-				else
-					error = VOP_RMDIR(ltdvp, ltvp,
-					    &txenccn.pec_cn);
-				PEFSDEBUG("pefs_rename: remove old: %s\n",
+				error = VOP_REMOVE(ltdvp, ltvp,
+				    &txenccn.pec_cn);
+				PEFSDEBUG("pefs_rename: remove dummy: %s\n",
 				    txenccn.pec_cn.cn_nameptr);
 				vput(ltvp);
 			}
-			VOP_UNLOCK(tdvp, 0);
+			VOP_UNLOCK(ltdvp, 0);
 		}
-		cache_purge(fdvp);
-		cache_purge(fvp);
+		pefs_rename_xlock_exit(tdvp);
 	}
 
 out_unlocked:
@@ -1181,6 +1227,9 @@ out:
 	pefs_enccn_free(&tenccn);
 	pefs_enccn_free(&txenccn);
 	pefs_enccn_free(&fenccn);
+
+	if (mp != NULL)
+		vfs_unbusy(mp);
 
 	return (error);
 }
@@ -1233,6 +1282,7 @@ pefs_lock(struct vop_lock1_args *ap)
 		 * here.
 		 */
 		vholdl(lvp);
+restart:
 		error = VOP_LOCK(lvp, flags);
 
 		/*
@@ -1258,6 +1308,19 @@ pefs_lock(struct vop_lock1_args *ap)
 			}
 			VOP_UNLOCK(lvp, 0);
 			error = vop_stdlock(ap);
+		} else if (error == 0 && vp->v_data == pn &&
+		    pn->pn_rename_xlock != 0 &&
+		    VOP_ISLOCKED(lvp) == LK_EXCLUSIVE &&
+		    lockstatus(&vp->v_lock) != LK_EXCLUSIVE) {
+			VOP_UNLOCK(lvp, 0);
+			atomic_add_long(&pefs_xlock_restarts, 1);
+			error = lockmgr(&vp->v_lock, LK_EXCLUSIVE, VI_MTX(vp));
+			if (error == 0) {
+				lockmgr(&vp->v_lock, LK_RELEASE,
+				    VI_MTX(vp));
+			}
+			VI_LOCK(lvp);
+			goto restart;
 		}
 		vdrop(lvp);
 	} else
@@ -1312,6 +1375,8 @@ pefs_inactive(struct vop_inactive_args *ap)
 	struct vnode *vp = ap->a_vp;
 	struct pefs_node *pn = VP_TO_PN(vp);
 
+	MPASS(pn->pn_rename_xlock == 0);
+
 	/*
 	 * Buffers can be still be in use because they are protected only by
 	 * vnode interlock.
@@ -1353,6 +1418,8 @@ pefs_reclaim(struct vop_reclaim_args *ap)
 	struct vnode *lowervp = pn->pn_lowervp;
 
 	PEFSDEBUG("pefs_reclaim: vp=%p\n", vp);
+
+	MPASS(pn->pn_rename_xlock == 0);
 
 	if (pn->pn_flags & PN_HASKEY)
 		vnode_destroy_vobject(vp);

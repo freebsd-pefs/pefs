@@ -109,6 +109,7 @@ struct pefs_node {
 	void			*pn_buf_small;
 	void			*pn_buf_large;
 	int			pn_flags;
+	volatile u_int		pn_rename_xlock;
 	struct pefs_tkey	pn_tkey;
 };
 
