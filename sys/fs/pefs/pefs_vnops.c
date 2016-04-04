@@ -72,6 +72,13 @@ __FBSDID("$FreeBSD$");
 #define	DIRENT_MINSIZE		(sizeof(struct dirent) - (MAXNAMLEN + 1))
 #define	DIRENT_MAXSIZE		(sizeof(struct dirent))
 
+/* See pefs_pathconf */
+#define PEFS_PC_NAME_MAX						\
+    (rounddown(PEFS_NAME_PTON_SIZE(NAME_MAX) - PEFS_NAME_CSUM_SIZE + 1,	\
+	PEFS_NAME_BLOCK_SIZE) - PEFS_TWEAK_SIZE)
+#define PEFS_PC_SYMLINK_MAX						\
+    (PEFS_NAME_PTON_SIZE(MAXPATHLEN - 1))
+
 CTASSERT(PEFS_SECTOR_SIZE == PAGE_SIZE);
 
 struct pefs_enccn {
@@ -584,6 +591,9 @@ pefs_lookup(struct vop_cachedlookup_args *ap)
 	    ((mp->mnt_flag & MNT_RDONLY) || pefs_no_keys(dvp)) &&
 	    (cnp->cn_nameiop != LOOKUP))
 		return (EROFS);
+
+	if (cnp->cn_namelen > PEFS_PC_NAME_MAX)
+		return (ENAMETOOLONG);
 
 	vhold(dvp);
 
@@ -1822,7 +1832,8 @@ pefs_symlink(struct vop_symlink_args *ap)
 
 	target_len = strlen(ap->a_target);
 	penc_target_len = PEFS_NAME_NTOP_SIZE(target_len) + 1;
-	if (penc_target_len > MAXPATHLEN)
+	if (penc_target_len > MAXPATHLEN - 1 ||
+	    target_len > PEFS_PC_SYMLINK_MAX)
 		return (ENAMETOOLONG);
 
 	pefs_enccn_init(&enccn);
@@ -2877,17 +2888,17 @@ pefs_pathconf(struct vop_pathconf_args *ap)
 	switch (ap->a_name) {
 	case _PC_NAME_MAX:
 		/*
-		 * ntop(csum + roundup(tweak + name, bs) = maxname
+		 * ntop(csum + roundup(tweak + name, bs)) = maxname
 		 * roundup(tweak + name, bs) = pton(maxname) - csum
-		 * name = rounddown(pton(maxname) - csum, bs) - tweak
+		 * name = rounddown(pton(maxname) - csum + 1, bs) - tweak
 		 */
 		v = PEFS_NAME_PTON_SIZE(*ap->a_retval);
-		v = rounddown(v - PEFS_NAME_CSUM_SIZE, PEFS_NAME_BLOCK_SIZE);
+		v = rounddown(v - PEFS_NAME_CSUM_SIZE + 1, PEFS_NAME_BLOCK_SIZE);
 		v = v - PEFS_TWEAK_SIZE;
 		*ap->a_retval = v;
 		break;
 	case _PC_SYMLINK_MAX:
-		v = PEFS_NAME_PTON_SIZE(*ap->a_retval - 1);
+		v = PEFS_NAME_PTON_SIZE(*ap->a_retval - 1) + 1;
 		*ap->a_retval = v;
 		break;
 	case _PC_REC_XFER_ALIGN:
