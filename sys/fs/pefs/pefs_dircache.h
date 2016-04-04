@@ -29,6 +29,7 @@
 
 #define	PEFS_CACHENAME_MAXLEN		PEFS_NAME_PTON_SIZE(MAXNAMLEN)
 
+struct pefs_dircache_pool;
 struct pefs_dircache_entry;
 LIST_HEAD(pefs_dircache_listhead, pefs_dircache_entry);
 
@@ -37,6 +38,7 @@ LIST_HEAD(pefs_dircache_listhead, pefs_dircache_entry);
 
 struct pefs_dircache {
 	struct sx		pd_lock;
+	struct pefs_dircache_pool *pd_pool;
 	struct pefs_dircache_listhead pd_heads[2];
 	u_long			pd_gen;
 	int			pd_flags;
@@ -62,7 +64,10 @@ extern int			pefs_dircache_enable;
 void	pefs_dircache_init(void);
 void	pefs_dircache_uninit(void);
 
-struct pefs_dircache	*pefs_dircache_get(void);
+struct pefs_dircache_pool *pefs_dircache_pool_create(void);
+void	pefs_dircache_pool_free(struct pefs_dircache_pool *);
+
+struct pefs_dircache	*pefs_dircache_create(struct pefs_dircache_pool *pdp);
 void	pefs_dircache_purge(struct pefs_dircache *pd);
 void	pefs_dircache_free(struct pefs_dircache *pd);
 void	pefs_dircache_update(struct pefs_dircache_entry *pde);

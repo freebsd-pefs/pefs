@@ -423,7 +423,7 @@ pefs_node_get(struct mount *mp, struct vnode *lvp, struct vnode **vpp,
 		return (0);
 	}
 	if (vp->v_type == VDIR)
-		pn->pn_dircache = pefs_dircache_get();
+		pn->pn_dircache = pefs_dircache_create(VFS_TO_PEFS(mp)->pm_dircache_pool);
 	*vpp = vp;
 	MPASS(PEFS_LOWERVP(*vpp) == lvp);
 	ASSERT_VOP_LOCKED(*vpp, "pefs_node_get");

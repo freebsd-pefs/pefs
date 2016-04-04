@@ -36,6 +36,7 @@ __FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
 #include <sys/systm.h>
+#include <sys/dirent.h>
 #include <sys/fcntl.h>
 #include <sys/kernel.h>
 #include <sys/lock.h>
@@ -46,6 +47,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/vnode.h>
 
 #include <fs/pefs/pefs.h>
+#include <fs/pefs/pefs_dircache.h>
 
 struct pefs_opt_descr {
 	char	*fs;
@@ -267,6 +269,10 @@ pefs_mount(struct mount *mp)
 	pefs_opt_set(mp, opt_dircache, pm, PM_DIRCACHE, "dircache");
 	pefs_opt_set(mp, opt_asyncreclaim, pm, PM_ASYNCRECLAIM, "asyncreclaim");
 
+	pm->pm_dircache_pool = pefs_dircache_pool_create();
+
+	mp->mnt_data = pm;
+
 	/*
 	 * Save reference.  Each mount also holds
 	 * a reference on the root vnode.
@@ -278,7 +284,9 @@ pefs_mount(struct mount *mp)
 	 */
 	if (error != 0) {
 		vput(lowerrootvp);
+		mtx_destroy(&pm->pm_keys_lock);
 		free(pm, M_PEFSMNT);
+		mp->mnt_data = NULL;
 		return (error);
 	}
 
@@ -295,6 +303,7 @@ pefs_mount(struct mount *mp)
 	 */
 	VOP_UNLOCK(vp, 0);
 
+
 	if (PEFS_LOWERVP(pm_rootvp)->v_mount->mnt_flag & MNT_LOCAL) {
 		MNT_ILOCK(mp);
 		mp->mnt_flag |= MNT_LOCAL;
@@ -305,7 +314,6 @@ pefs_mount(struct mount *mp)
 	mp->mnt_kern_flag |= lowerrootvp->v_mount->mnt_kern_flag & MNTK_MPSAFE;
 	MNT_IUNLOCK(mp);
 #endif
-	mp->mnt_data =  pm;
 	vfs_getnewfsid(mp);
 
 	PEFSDEBUG("pefs_mount: lower %s, alias at %s\n",
@@ -337,6 +345,7 @@ pefs_unmount(struct mount *mp, int mntflags)
 	 * Finally, throw away the pefs_mount structure
 	 */
 	pm = VFS_TO_PEFS(mp);
+	pefs_dircache_pool_free(pm->pm_dircache_pool);
 	mp->mnt_data = 0;
 	pefs_key_remove_all(pm);
 	mtx_destroy(&pm->pm_keys_lock);

@@ -71,6 +71,7 @@ struct pefs_xkey {
 struct pefs_alg;
 struct pefs_ctx;
 struct pefs_dircache;
+struct pefs_dircache_pool;
 struct vfsconf;
 
 TAILQ_HEAD(pefs_key_head, pefs_key);
@@ -120,6 +121,7 @@ struct pefs_mount {
 	struct vnode		*pm_rootvp;
 	struct mtx		pm_keys_lock;
 	struct pefs_key_head	pm_keys;
+	struct pefs_dircache_pool *pm_dircache_pool;
 	int			pm_flags;
 };
 
