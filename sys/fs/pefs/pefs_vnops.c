@@ -2890,6 +2890,10 @@ pefs_pathconf(struct vop_pathconf_args *ap)
 		v = PEFS_NAME_PTON_SIZE(*ap->a_retval - 1);
 		*ap->a_retval = v;
 		break;
+	case _PC_REC_XFER_ALIGN:
+		if (*ap->a_retval % PAGE_SIZE != 0)
+			*ap->a_retval = PAGE_SIZE;
+		break;
 	}
 
 	return (0);
