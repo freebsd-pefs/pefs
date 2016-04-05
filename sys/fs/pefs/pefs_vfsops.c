@@ -304,16 +304,17 @@ pefs_mount(struct mount *mp)
 	VOP_UNLOCK(vp, 0);
 
 
-	if (PEFS_LOWERVP(pm_rootvp)->v_mount->mnt_flag & MNT_LOCAL) {
-		MNT_ILOCK(mp);
+	MNT_ILOCK(mp);
+	if (lowerrootvp->v_mount->mnt_flag & MNT_LOCAL) {
 		mp->mnt_flag |= MNT_LOCAL;
-		MNT_IUNLOCK(mp);
 	}
 #if __FreeBSD_version < 1000021
-	MNT_ILOCK(mp);
 	mp->mnt_kern_flag |= lowerrootvp->v_mount->mnt_kern_flag & MNTK_MPSAFE;
-	MNT_IUNLOCK(mp);
+#else
+	mp->mnt_kern_flag |= lowerrootvp->v_mount->mnt_kern_flag &
+		(MNTK_LOOKUP_SHARED | MNTK_EXTENDED_SHARED);
 #endif
+	MNT_IUNLOCK(mp);
 	vfs_getnewfsid(mp);
 
 	PEFSDEBUG("pefs_mount: lower %s, alias at %s\n",
