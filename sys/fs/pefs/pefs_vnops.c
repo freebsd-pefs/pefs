@@ -1047,13 +1047,14 @@ pefs_rename(struct vop_rename_args *ap)
 	struct pefs_enccn tenccn;
 	struct pefs_enccn txenccn;
 	struct mount *mp = NULL;
-	int error;
+	int error, lvp_ref;
 
 	KASSERT(tcnp->cn_flags & (SAVENAME | SAVESTART),
 	    ("pefs_rename: no name"));
 	KASSERT(fcnp->cn_flags & (SAVENAME | SAVESTART),
 	    ("pefs_rename: no name"));
 
+	lvp_ref = 0;
 	pefs_enccn_init(&fenccn);
 	pefs_enccn_init(&tenccn);
 	pefs_enccn_init(&txenccn);
@@ -1141,7 +1142,12 @@ pefs_rename(struct vop_rename_args *ap)
 
 		VP_TO_PN(tvp)->pn_flags |= PN_WANTRECYCLE;
 		cache_purge(tvp);
+		lvp_ref = 1;
+		vref(lfdvp);
+		vref(lfvp);
+		vref(ltdvp);
 		VOP_UNLOCK(tvp, 0);
+		ltvp = NULL;
 		error = pefs_rename_xlock_enter(tdvp);
 		if (error != 0) {
 			PEFSDEBUG("pefs_rename: failed to acquire interlock\n");
@@ -1160,7 +1166,6 @@ pefs_rename(struct vop_rename_args *ap)
 				goto out_unlocked;
 			}
 		}
-		ltvp = NULL;
 	} else if (tvp != NULL && tvp->v_type == VDIR) {
 		error = pefs_enccn_get(&tenccn, tdvp, tvp, tcnp);
 		if (error != 0)
@@ -1176,11 +1181,15 @@ pefs_rename(struct vop_rename_args *ap)
 	MPASS(error == 0);
 	ASSERT_VOP_LOCKED(ltdvp, "pefs_rename");
 
-	vref(lfdvp);
-	vref(lfvp);
-	vref(ltdvp);
-	if (ltvp != NULL)
-		vref(ltvp);
+	if (lvp_ref == 0) {
+		vref(lfdvp);
+		vref(lfvp);
+		vref(ltdvp);
+		if (ltvp != NULL)
+			vref(ltvp);
+	} else {
+		lvp_ref = 0;
+	}
 
 	error = VOP_RENAME(lfdvp, lfvp, &fenccn.pec_cn, ltdvp, ltvp,
 	    &tenccn.pec_cn);
@@ -1221,6 +1230,11 @@ out_unlocked:
 	vrele(tdvp);
 	if (tvp != NULL)
 		vrele(tvp);
+	if (lvp_ref != 0) {
+		vrele(lfdvp);
+		vrele(lfvp);
+		vrele(ltdvp);
+	}
 	goto out;
 
 out_locked:
