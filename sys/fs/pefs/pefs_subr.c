@@ -208,15 +208,17 @@ pefs_insmntque_dtr(struct vnode *vp, void *_pn)
 {
 	struct pefs_node *pn = _pn;
 
-	PEFSDEBUG("pefs_insmntque_dtr: free node %p\n", pn);
+	PEFSDEBUG("pefs_insmntque_dtr: node %p\n", pn);
+	lockmgr(&vp->v_lock, LK_EXCLUSIVE, NULL);
+	VI_LOCK(vp);
 	vp->v_data = NULL;
 	vp->v_vnlock = &vp->v_lock;
-	pefs_key_release(pn->pn_tkey.ptk_key);
-	uma_zfree(pefs_node_zone, pn);
 	vp->v_op = &dead_vnodeops;
-	vn_lock(vp, LK_EXCLUSIVE | LK_RETRY);
+	VI_UNLOCK(vp);
 	vgone(vp);
 	vput(vp);
+	pefs_key_release(pn->pn_tkey.ptk_key);
+	uma_zfree(pefs_node_zone, pn);
 }
 
 static int
@@ -364,19 +366,14 @@ pefs_node_get(struct mount *mp, struct vnode *lvp, struct vnode **vpp,
 		return (0);
 	}
 
-	/*
-	 * We do not serialize vnode creation, instead we will check for
-	 * duplicates later, when adding new vnode to hash.
-	 *
-	 * Note that duplicate can only appear in hash if the lvp is
-	 * locked LK_SHARED.
-	 */
+	if (VOP_ISLOCKED(lvp) != LK_EXCLUSIVE) {
+		vn_lock(lvp, LK_UPGRADE | LK_RETRY);
+		if ((lvp->v_iflag & VI_DOOMED) != 0) {
+			printf("pefs_node_get: failed to upgrade lock: lvp %p\n", lvp);
+			return (ENOENT);
+		}
+	}
 
-	/*
-	 * Do the MALLOC before the getnewvnode since doing so afterward
-	 * might cause a bogus v_data pointer to get dereferenced
-	 * elsewhere if MALLOC should block.
-	 */
 	pn = uma_zalloc(pefs_node_zone, M_WAITOK | M_ZERO);
 	pn->pn_lowervp = lvp;
 
@@ -415,9 +412,7 @@ pefs_node_get(struct mount *mp, struct vnode *lvp, struct vnode **vpp,
 	*vpp = pefs_nodehash_insert(mp, pn);
 	if (*vpp != NULL) {
 		vrele(lvp);
-		vp->v_vnlock = &vp->v_lock;
-		pn->pn_lowervp = NULL;
-		vrele(vp);
+		pefs_insmntque_dtr(vp, pn);
 		MPASS(PEFS_LOWERVP(*vpp) == lvp);
 		ASSERT_VOP_LOCKED(*vpp, "pefs_node_get: duplicate");
 		return (0);

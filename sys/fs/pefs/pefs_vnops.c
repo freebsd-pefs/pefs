@@ -1462,10 +1462,15 @@ static int
 pefs_reclaim(struct vop_reclaim_args *ap)
 {
 	struct vnode *vp = ap->a_vp;
-	struct pefs_node *pn = VP_TO_PN(vp);
-	struct vnode *lowervp = pn->pn_lowervp;
+	struct pefs_node *pn;
+	struct vnode *lowervp;
+
+	pn = VP_TO_PN(vp);
+	lowervp = pn->pn_lowervp;
 
 	PEFSDEBUG("pefs_reclaim: vp=%p\n", vp);
+	KASSERT(lowervp != NULL && vp->v_vnlock != &vp->v_lock,
+	    ("Reclaiming incomplete pefs vnode %p", vp));
 
 	MPASS(pn->pn_rename_xlock == 0);
 
@@ -1481,6 +1486,8 @@ pefs_reclaim(struct vop_reclaim_args *ap)
 	 */
 
 	pefs_node_buf_free(pn);
+
+	lockmgr(&vp->v_lock, LK_EXCLUSIVE, NULL);
 	VI_LOCK(vp);
 #ifdef INVARIANTS
 	if ((pn->pn_flags & (PN_LOCKBUF_SMALL | PN_LOCKBUF_LARGE)) != 0)
@@ -1490,9 +1497,8 @@ pefs_reclaim(struct vop_reclaim_args *ap)
 	vp->v_vnlock = &vp->v_lock;
 	pn->pn_lowervp = NULL;
 	pn->pn_lowervp_dead = lowervp;
-	lockmgr(vp->v_vnlock, LK_EXCLUSIVE | LK_INTERLOCK, VI_MTX(vp));
-	if (lowervp == NULL)
-		panic("pefs_reclaim: reclaiming a node with no lowervp");
+	VI_UNLOCK(vp);
+
 	VOP_UNLOCK(lowervp, 0);
 
 	/* Asynchronously release lower vnode and free pefs node. */
