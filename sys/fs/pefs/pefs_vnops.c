@@ -1039,25 +1039,26 @@ static int
 pefs_rename(struct vop_rename_args *ap)
 {
 	struct vnode *fdvp = ap->a_fdvp;
-	struct vnode *lfdvp = PEFS_LOWERVP(fdvp);
 	struct vnode *fvp = ap->a_fvp;
-	struct vnode *lfvp = PEFS_LOWERVP(fvp);
 	struct vnode *tdvp = ap->a_tdvp;
-	struct vnode *ltdvp = PEFS_LOWERVP(tdvp);
 	struct vnode *tvp = ap->a_tvp;
-	struct vnode *ltvp = (tvp == NULL ? NULL : PEFS_LOWERVP(tvp));
 	struct componentname *fcnp = ap->a_fcnp;
 	struct componentname *tcnp = ap->a_tcnp;
-	struct pefs_enccn fenccn;
-	struct pefs_enccn tenccn;
-	struct pefs_enccn txenccn;
-	struct mount *mp = NULL;
+	struct vnode *lfdvp, *lfvp, *ltdvp, *ltvp;
+	struct pefs_enccn fenccn, tenccn, txenccn;
+	struct mount *mp;
 	int error, lvp_ref;
 
 	KASSERT(tcnp->cn_flags & (SAVENAME | SAVESTART),
 	    ("pefs_rename: no name"));
 	KASSERT(fcnp->cn_flags & (SAVENAME | SAVESTART),
 	    ("pefs_rename: no name"));
+
+	lfdvp = PEFS_LOWERVP(fdvp);
+	lfvp = PEFS_LOWERVP(fvp);
+	ltdvp = PEFS_LOWERVP(tdvp);
+	ltvp = (tvp == NULL ? NULL : PEFS_LOWERVP(tvp));
+	mp = NULL;
 
 	lvp_ref = 0;
 	pefs_enccn_init(&fenccn);
@@ -1587,12 +1588,12 @@ static int
 pefs_readdir(struct vop_readdir_args *ap)
 {
 	struct vnode *vp = ap->a_vp;
-	struct vnode *lvp = PEFS_LOWERVP(vp);
+	struct vnode *lvp;
 	struct uio *uio = ap->a_uio;
 	struct ucred *cred = ap->a_cred;
 	int *eofflag = ap->a_eofflag;
 	struct uio *puio;
-	struct pefs_node *pn = VP_TO_PN(vp);
+	struct pefs_node *pn;
 	struct pefs_key *pn_key;
 	struct pefs_chunk pc;
 	struct pefs_ctx *ctx;
@@ -1603,6 +1604,9 @@ pefs_readdir(struct vop_readdir_args *ap)
 	u_long *r_cookies = NULL, *cookies = NULL;
 	int *a_ncookies;
 	u_long **a_cookies;
+
+	lvp = PEFS_LOWERVP(vp);
+	pn = VP_TO_PN(vp);
 
 	if (pefs_no_keys(vp)) {
 		error = VOP_READDIR(lvp, uio, cred, eofflag, ap->a_ncookies,
@@ -1858,10 +1862,10 @@ static int
 pefs_symlink(struct vop_symlink_args *ap)
 {
 	struct vnode *dvp = ap->a_dvp;
-	struct vnode *ldvp = PEFS_LOWERVP(dvp);
+	struct vnode *ldvp;
 	struct vnode *lvp;
 	struct componentname *cnp = ap->a_cnp;
-	struct pefs_node *dpn = VP_TO_PN(dvp);
+	struct pefs_node *dpn;
 	struct pefs_enccn enccn;
 	struct pefs_chunk pc;
 	char *target = ap->a_target;
@@ -1869,6 +1873,9 @@ pefs_symlink(struct vop_symlink_args *ap)
 	size_t penc_target_len;
 	size_t target_len;
 	int error;
+
+	ldvp = PEFS_LOWERVP(dvp);
+	dpn = VP_TO_PN(dvp);
 
 	KASSERT(cnp->cn_flags & SAVENAME, ("pefs_symlink: no name"));
 	if (pefs_no_keys(dvp))
