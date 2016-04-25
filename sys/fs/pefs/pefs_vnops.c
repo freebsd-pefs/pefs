@@ -272,99 +272,6 @@ pefs_enccn_create_node(struct pefs_enccn *pec, struct vnode *dvp,
 	return (error);
 }
 
-static void
-pefs_lookup_parsedir(struct pefs_dircache *pd, struct pefs_ctx *ctx,
-    struct pefs_key *pk, void *mem, size_t sz, char *name, size_t name_len,
-    struct pefs_dircache_entry **retval)
-{
-	struct pefs_dircache_entry *cache;
-	struct dirent *de;
-
-	PEFSDEBUG("pefs_lookup_parsedir: lookup %.*s\n", (int)name_len, name);
-	cache = NULL;
-	for (de = (struct dirent*) mem; sz > DIRENT_MINSIZE;
-			sz -= de->d_reclen,
-			de = (struct dirent *)(((caddr_t)de) + de->d_reclen)) {
-		MPASS(de->d_reclen <= sz);
-		if (de->d_reclen == 0)
-			break;
-		if (de->d_type == DT_WHT || de->d_fileno == 0)
-			continue;
-		if (pefs_name_skip(de->d_name, de->d_namlen))
-			continue;
-
-		cache = pefs_cache_dirent(pd, de, ctx, pk);
-		if (cache != NULL && *retval == NULL &&
-		    cache->pde_namelen == name_len &&
-		    crypto_verify_bytes(name, cache->pde_name, name_len) == 0) {
-			*retval = cache;
-		}
-	}
-}
-
-static int
-pefs_lookup_readdir(struct pefs_enccn *pec, u_long gen, struct vnode *dvp,
-    struct componentname *cnp)
-{
-	struct uio *uio;
-	struct vnode *ldvp;
-	struct pefs_node *dpn;
-	struct pefs_chunk pc;
-	struct pefs_ctx *ctx;
-	struct pefs_dircache_entry *cache;
-	struct pefs_key *dpn_key;
-	off_t offset;
-	int eofflag, error;
-
-	ldvp = PEFS_LOWERVP(dvp);
-	dpn = VP_TO_PN(dvp);
-
-	MPASS(pec != NULL && dvp != NULL && cnp != NULL);
-
-	PEFSDEBUG("pefs_lookup_readdir: name=%.*s op=%d\n",
-	    (int)cnp->cn_namelen, cnp->cn_nameptr, (int) cnp->cn_nameiop);
-
-	error = 0;
-	offset = 0;
-	eofflag = 0;
-	cache = NULL;
-	ctx = pefs_ctx_get();
-	pefs_chunk_create(&pc, dpn, PEFS_SECTOR_SIZE);
-	dpn_key = pefs_node_key(dpn);
-	pefs_dircache_beginupdate(dpn->pn_dircache);
-	while (!eofflag) {
-		uio = pefs_chunk_uio(&pc, offset, UIO_READ);
-		error = VOP_READDIR(ldvp, uio, cnp->cn_cred, &eofflag,
-		    NULL, NULL);
-		if (error != 0)
-			break;
-		offset = uio->uio_offset;
-
-		if (pc.pc_size == uio->uio_resid)
-			break;
-		pefs_chunk_setsize(&pc, pc.pc_size - uio->uio_resid);
-		pefs_lookup_parsedir(dpn->pn_dircache, ctx, dpn_key,
-		    pc.pc_base, pc.pc_size, cnp->cn_nameptr, cnp->cn_namelen,
-		    &cache);
-		pefs_chunk_restore(&pc);
-	}
-	if (eofflag != 0 && error == 0)
-		pefs_dircache_endupdate(dpn->pn_dircache, gen);
-	else
-		pefs_dircache_abortupdate(dpn->pn_dircache);
-
-	pefs_ctx_free(ctx);
-	pefs_key_release(dpn_key);
-	pefs_chunk_free(&pc, dpn);
-	if (cache != NULL && error == 0)
-		pefs_enccn_set(pec, &cache->pde_tkey,
-		    cache->pde_encname, cache->pde_encnamelen, cnp);
-	else if (cache == NULL && error == 0)
-		error = ENOENT;
-
-	return (error);
-}
-
 static int
 pefs_enccn_get(struct pefs_enccn *pec, struct vnode *dvp, struct vnode *vp,
     struct componentname *cnp)
@@ -483,6 +390,99 @@ loop:
 	}
 
 	return (0);
+}
+
+static void
+pefs_lookup_parsedir(struct pefs_dircache *pd, struct pefs_ctx *ctx,
+    struct pefs_key *pk, void *mem, size_t sz, char *name, size_t name_len,
+    struct pefs_dircache_entry **retval)
+{
+	struct pefs_dircache_entry *cache;
+	struct dirent *de;
+
+	PEFSDEBUG("pefs_lookup_parsedir: lookup %.*s\n", (int)name_len, name);
+	cache = NULL;
+	for (de = (struct dirent*) mem; sz > DIRENT_MINSIZE;
+			sz -= de->d_reclen,
+			de = (struct dirent *)(((caddr_t)de) + de->d_reclen)) {
+		MPASS(de->d_reclen <= sz);
+		if (de->d_reclen == 0)
+			break;
+		if (de->d_type == DT_WHT || de->d_fileno == 0)
+			continue;
+		if (pefs_name_skip(de->d_name, de->d_namlen))
+			continue;
+
+		cache = pefs_cache_dirent(pd, de, ctx, pk);
+		if (cache != NULL && *retval == NULL &&
+		    cache->pde_namelen == name_len &&
+		    crypto_verify_bytes(name, cache->pde_name, name_len) == 0) {
+			*retval = cache;
+		}
+	}
+}
+
+static int
+pefs_lookup_readdir(struct pefs_enccn *pec, u_long gen, struct vnode *dvp,
+    struct componentname *cnp)
+{
+	struct uio *uio;
+	struct vnode *ldvp;
+	struct pefs_node *dpn;
+	struct pefs_chunk pc;
+	struct pefs_ctx *ctx;
+	struct pefs_dircache_entry *cache;
+	struct pefs_key *dpn_key;
+	off_t offset;
+	int eofflag, error;
+
+	ldvp = PEFS_LOWERVP(dvp);
+	dpn = VP_TO_PN(dvp);
+
+	MPASS(pec != NULL && dvp != NULL && cnp != NULL);
+
+	PEFSDEBUG("pefs_lookup_readdir: name=%.*s op=%d\n",
+	    (int)cnp->cn_namelen, cnp->cn_nameptr, (int) cnp->cn_nameiop);
+
+	error = 0;
+	offset = 0;
+	eofflag = 0;
+	cache = NULL;
+	ctx = pefs_ctx_get();
+	pefs_chunk_create(&pc, dpn, PEFS_SECTOR_SIZE);
+	dpn_key = pefs_node_key(dpn);
+	pefs_dircache_beginupdate(dpn->pn_dircache);
+	while (!eofflag) {
+		uio = pefs_chunk_uio(&pc, offset, UIO_READ);
+		error = VOP_READDIR(ldvp, uio, cnp->cn_cred, &eofflag,
+		    NULL, NULL);
+		if (error != 0)
+			break;
+		offset = uio->uio_offset;
+
+		if (pc.pc_size == uio->uio_resid)
+			break;
+		pefs_chunk_setsize(&pc, pc.pc_size - uio->uio_resid);
+		pefs_lookup_parsedir(dpn->pn_dircache, ctx, dpn_key,
+		    pc.pc_base, pc.pc_size, cnp->cn_nameptr, cnp->cn_namelen,
+		    &cache);
+		pefs_chunk_restore(&pc);
+	}
+	if (eofflag != 0 && error == 0)
+		pefs_dircache_endupdate(dpn->pn_dircache, gen);
+	else
+		pefs_dircache_abortupdate(dpn->pn_dircache);
+
+	pefs_ctx_free(ctx);
+	pefs_key_release(dpn_key);
+	pefs_chunk_free(&pc, dpn);
+	if (cache != NULL && error == 0)
+		pefs_enccn_set(pec, &cache->pde_tkey,
+		    cache->pde_encname, cache->pde_encnamelen, cnp);
+	else if (cache == NULL && error == 0)
+		error = ENOENT;
+
+	return (error);
 }
 
 static int
