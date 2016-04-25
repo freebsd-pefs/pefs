@@ -54,13 +54,6 @@ __FBSDID("$FreeBSD$");
 
 #define	DIRCACHE_GLOBAL_ENV	"vfs.pefs.dircache.global"
 
-#define	DIRCACHE_HEADOFF(pd)	(((pd)->pd_flags & PD_SWAPEDHEADS) ? 1 : 0)
-#define	DIRCACHE_ACTIVEHEAD(pd)	(&(pd)->pd_heads[DIRCACHE_HEADOFF(pd) ^ 0])
-#define	DIRCACHE_STALEHEAD(pd)	(&(pd)->pd_heads[DIRCACHE_HEADOFF(pd) ^ 1])
-
-#define	DIRCACHE_ASSERT(pd)	MPASS(LIST_EMPTY(&(pd)->pd_heads[0]) || \
-		LIST_EMPTY(&(pd)->pd_heads[1]))
-
 #define DIRCACHE_TBL(pool, hash) \
 	(&(pool)->pdp_tbl[(hash) & dircache_hashmask])
 #define DIRCACHE_ENCTBL(pool, hash) \
@@ -104,7 +97,6 @@ SYSCTL_ULONG(_vfs_pefs_dircache, OID_AUTO, entries, CTLFLAG_RD,
 
 static void	pefs_dircache_pool_init(struct pefs_dircache_pool *pdp);
 static void	pefs_dircache_pool_uninit(struct pefs_dircache_pool *pdp);
-static void	dircache_entry_free(struct pefs_dircache_entry *pde);
 
 void
 pefs_dircache_init(void)
@@ -200,53 +192,6 @@ pefs_dircache_pool_free(struct pefs_dircache_pool *pdp)
 	free(pdp, M_PEFSHASH);
 }
 
-struct pefs_dircache *
-pefs_dircache_create(struct pefs_dircache_pool *pdp)
-{
-	struct pefs_dircache *pd;
-
-	pd = uma_zalloc(dircache_zone, M_WAITOK | M_ZERO);
-	sx_init(&pd->pd_lock, "pefs_dircache_sx");
-	pd->pd_pool = pdp;
-	LIST_INIT(&pd->pd_heads[0]);
-	LIST_INIT(&pd->pd_heads[1]);
-
-	return (pd);
-}
-
-void
-pefs_dircache_purge(struct pefs_dircache *pd)
-{
-	struct pefs_dircache_entry *pde;
-
-	if (pd == NULL)
-		return;
-
-	sx_xlock(&pd->pd_lock);
-
-	while (!LIST_EMPTY(DIRCACHE_STALEHEAD(pd))) {
-		pde = LIST_FIRST(DIRCACHE_STALEHEAD(pd));
-		dircache_entry_free(pde);
-	}
-	while (!LIST_EMPTY(DIRCACHE_ACTIVEHEAD(pd))) {
-		pde = LIST_FIRST(DIRCACHE_ACTIVEHEAD(pd));
-		dircache_entry_free(pde);
-	}
-
-	sx_unlock(&pd->pd_lock);
-}
-
-void
-pefs_dircache_free(struct pefs_dircache *pd)
-{
-	if (pd == NULL)
-		return;
-
-	pefs_dircache_purge(pd);
-	sx_destroy(&pd->pd_lock);
-	uma_zfree(dircache_zone, pd);
-}
-
 static __inline uint32_t
 dircache_hashname(struct pefs_dircache *pd, char const *buf, size_t len)
 {
@@ -260,16 +205,41 @@ dircache_hashname(struct pefs_dircache *pd, char const *buf, size_t len)
 static void
 dircache_entry_free(struct pefs_dircache_entry *pde)
 {
-	struct pefs_dircache_pool *pdp;
-	struct pefs_dircache_listhead *bucket;
-	struct mtx_padalign *bucket_mtx;
-	MPASS(pde != NULL);
+	PEFSDEBUG("dircache_entry_free: %p %s -> %s\n",
+	    pde, pde->pde_name, pde->pde_encname);
 
-	PEFSDEBUG("dircache_entry_free: %s -> %s\n",
-	    pde->pde_name, pde->pde_encname);
-	pdp = pde->pde_dircache->pd_pool;
 	pefs_key_release(pde->pde_tkey.ptk_key);
 	LIST_REMOVE(pde, pde_dir_entry);
+
+	atomic_subtract_long(&dircache_entries, 1);
+	uma_zfree(dircache_entry_zone, pde);
+}
+
+static void
+dircache_gc_locked(struct pefs_dircache *pd)
+{
+	struct pefs_dircache_entry *pde, *tmp;
+
+	// ASSERT_VOP_ELOCKED
+	LIST_FOREACH_SAFE(pde, &pd->pd_stalehead, pde_dir_entry, tmp) {
+		dircache_entry_free(pde);
+	}
+}
+
+static void
+dircache_entry_expire_locked(struct pefs_dircache_entry *pde)
+{
+	struct pefs_dircache_pool *pdp;
+	struct pefs_dircache_listhead *bucket;
+	struct pefs_dircache *pd;
+	struct mtx_padalign *bucket_mtx;
+
+	pd = pde->pde_dircache;
+	pdp = pd->pd_pool;
+	pde->pde_dircache = NULL;
+
+	LIST_REMOVE(pde, pde_dir_entry);
+	LIST_INSERT_HEAD(&pd->pd_stalehead, pde, pde_dir_entry);
 
 	bucket = DIRCACHE_TBL(pdp, pde->pde_namehash);
 	bucket_mtx = DIRCACHE_MTX(pde->pde_namehash);
@@ -282,53 +252,138 @@ dircache_entry_free(struct pefs_dircache_entry *pde)
 	mtx_lock(bucket_mtx);
 	LIST_REMOVE(pde, pde_enchash_entry);
 	mtx_unlock(bucket_mtx);
-
-	atomic_subtract_long(&dircache_entries, 1);
-	uma_zfree(dircache_entry_zone, pde);
 }
 
-static void
-dircache_expire(struct pefs_dircache *pd)
+static __inline int
+dircache_cmp_name(struct pefs_dircache_entry *pde, uint32_t h,
+    char const *name, size_t name_len)
+{
+	if (pde->pde_namehash == h &&
+	    pde->pde_namelen == name_len &&
+	    memcmp(pde->pde_name, name, name_len) == 0)
+		return 1;
+	return 0;
+}
+
+static __inline int
+dircache_cmp_encname(struct pefs_dircache_entry *pde, uint32_t h,
+    char const *encname, size_t encname_len)
+{
+	if (pde->pde_encnamehash == h &&
+	    pde->pde_encnamelen == encname_len &&
+	    memcmp(pde->pde_encname, encname, encname_len) == 0)
+		return 1;
+	return 0;
+}
+
+static __inline void
+dircache_retry_set(struct pefs_dircache *pd, struct pefs_dircache_entry *pde)
+{
+	uint32_t h;
+
+	h = (pde->pde_encnamehash & PEFS_DIRCACHE_RETRY_MASK);
+	atomic_store_rel_ptr((volatile uintptr_t *)&pd->pd_retry[h],
+	    (uintptr_t)pde);
+}
+
+static __inline void
+dircache_retry_clear(struct pefs_dircache *pd)
+{
+	u_int i;
+
+	for (i = 0; i < PEFS_DIRCACHE_RETRY_COUNT; i++)
+		atomic_store_rel_ptr((volatile uintptr_t *)&pd->pd_retry[i], 0);
+}
+
+struct pefs_dircache *
+pefs_dircache_create(struct pefs_dircache_pool *pdp)
+{
+	struct pefs_dircache *pd;
+
+	pd = uma_zalloc(dircache_zone, M_WAITOK | M_ZERO);
+	mtx_init(&pd->pd_mtx, "pefs_dircache_mtx", NULL, MTX_DEF);
+	pd->pd_pool = pdp;
+	LIST_INIT(&pd->pd_activehead);
+	LIST_INIT(&pd->pd_stalehead);
+
+	return (pd);
+}
+
+void
+pefs_dircache_purge(struct pefs_dircache *pd)
+{
+	struct pefs_dircache_entry *pde, *tmp;
+
+	if (pd == NULL)
+		return;
+
+	// ASSERT_VOP_ELOCKED
+	mtx_lock(&pd->pd_mtx);
+	atomic_store_rel_long(&pd->pd_gen, 0);
+	LIST_FOREACH_SAFE(pde, &pd->pd_activehead, pde_dir_entry, tmp) {
+		dircache_entry_expire_locked(pde);
+	}
+	mtx_unlock(&pd->pd_mtx);
+
+	pefs_dircache_gc(pd);
+}
+
+void
+pefs_dircache_expire(struct pefs_dircache_entry *pde, u_int dflags)
+{
+	struct pefs_dircache *pd;
+
+	pd = pde->pde_dircache;
+	if (pd == NULL)
+		return;
+	mtx_lock(&pd->pd_mtx);
+	atomic_store_rel_long(&pd->pd_gen, 0);
+	dircache_retry_clear(pd);
+	if (pde->pde_dircache != NULL) {
+		dircache_entry_expire_locked(pde);
+		if ((dflags & PEFS_DF_FORCE_GC) != 0)
+			dircache_gc_locked(pd);
+
+	}
+	mtx_unlock(&pd->pd_mtx);
+}
+
+void
+pefs_dircache_expire_encname(struct pefs_dircache *pd,
+    const char *encname, size_t encname_len, u_int dflags)
 {
 	struct pefs_dircache_entry *pde;
 
-	pd->pd_gen = 0;
-	if (LIST_EMPTY(DIRCACHE_STALEHEAD(pd))) {
-		pd->pd_flags ^= PD_SWAPEDHEADS;
-	} else while (!LIST_EMPTY(DIRCACHE_ACTIVEHEAD(pd))) {
-		pde = LIST_FIRST(DIRCACHE_ACTIVEHEAD(pd));
-		pde->pde_gen = 0;
-		LIST_REMOVE(pde, pde_dir_entry);
-		LIST_INSERT_HEAD(DIRCACHE_STALEHEAD(pd), pde, pde_dir_entry);
-		PEFSDEBUG("dircache_expire: active entry: %p\n", pde);
-	}
-	MPASS(LIST_EMPTY(DIRCACHE_ACTIVEHEAD(pd)));
+	PEFSDEBUG("dircache_expire_encname: %.*s\n",
+	    (int)encname_len, encname);
+	pde = pefs_dircache_enclookup_retry(pd, encname, encname_len);
+	if (pde == NULL)
+		pde = pefs_dircache_enclookup(pd, encname, encname_len);
+	if (pde != NULL)
+		pefs_dircache_expire(pde, dflags);
 }
 
-static void
-dircache_update(struct pefs_dircache_entry *pde, int onlist)
+void
+pefs_dircache_gc(struct pefs_dircache *pd)
 {
-	struct pefs_dircache *pd = pde->pde_dircache;
+	if (pd == NULL)
+		return;
 
-	sx_assert(&pd->pd_lock, SA_XLOCKED);
+	mtx_lock(&pd->pd_mtx);
+	dircache_retry_clear(pd);
+	dircache_gc_locked(pd);
+	mtx_unlock(&pd->pd_mtx);
+}
 
-	if ((pd->pd_flags & PD_UPDATING) != 0) {
-		PEFSDEBUG("pefs_dircache_update: %s -> %s\n",
-		    pde->pde_name, pde->pde_encname);
-		pde->pde_gen = pd->pd_gen;
-		if (onlist != 0)
-			LIST_REMOVE(pde, pde_dir_entry);
-		LIST_INSERT_HEAD(DIRCACHE_ACTIVEHEAD(pd), pde, pde_dir_entry);
-	} else if (pd->pd_gen == 0 || pd->pd_gen != pde->pde_gen) {
-		PEFSDEBUG("pefs_dircache: inconsistent cache: "
-		    "gen=%ld old_gen=%ld name=%s\n",
-		    pd->pd_gen, pde->pde_gen, pde->pde_name);
-		dircache_expire(pd);
-		pde->pde_gen = 0;
-		if (onlist == 0)
-			LIST_INSERT_HEAD(DIRCACHE_STALEHEAD(pd), pde,
-					pde_dir_entry);
-	}
+void
+pefs_dircache_free(struct pefs_dircache *pd)
+{
+	if (pd == NULL)
+		return;
+
+	pefs_dircache_purge(pd);
+	mtx_destroy(&pd->pd_mtx);
+	uma_zfree(dircache_zone, pd);
 }
 
 struct pefs_dircache_entry *
@@ -338,11 +393,10 @@ pefs_dircache_insert(struct pefs_dircache *pd, struct pefs_tkey *ptk,
 {
 	struct pefs_dircache_pool *pdp;
 	struct pefs_dircache_listhead *bucket;
-	struct pefs_dircache_entry *pde;
+	struct pefs_dircache_entry *pde, *xpde;
 	struct mtx_padalign *bucket_mtx;
 
 	MPASS(ptk->ptk_key != NULL);
-	sx_assert(&pd->pd_lock, SA_XLOCKED);
 
 	if (name_len == 0 || name_len >= sizeof(pde->pde_name) ||
 	    encname_len == 0 || encname_len >= sizeof(pde->pde_encname))
@@ -368,8 +422,28 @@ pefs_dircache_insert(struct pefs_dircache *pd, struct pefs_tkey *ptk,
 	    pde->pde_encnamelen);
 
 	/* Insert into list and set pge_gen */
-	dircache_update(pde, 0);
 	pdp = pd->pd_pool;
+
+	mtx_lock(&pd->pd_mtx);
+
+	bucket = DIRCACHE_ENCTBL(pdp, pde->pde_encnamehash);
+	bucket_mtx = DIRCACHE_MTX(pde->pde_encnamehash);
+	mtx_lock(bucket_mtx);
+	LIST_FOREACH(xpde, bucket, pde_enchash_entry) {
+		if (xpde->pde_dircache == pd &&
+		    dircache_cmp_encname(xpde, pde->pde_encnamehash,
+		    encname, encname_len) != 0) {
+			mtx_unlock(bucket_mtx);
+			mtx_unlock(&pd->pd_mtx);
+			PEFSDEBUG("pefs_dircache_insert: collision %s\n",
+			    pde->pde_name);
+			pefs_key_release(pde->pde_tkey.ptk_key);
+			uma_zfree(dircache_entry_zone, pde);
+			return (xpde);
+		}
+	}
+	LIST_INSERT_HEAD(bucket, pde, pde_enchash_entry);
+	mtx_unlock(bucket_mtx);
 
 	bucket = DIRCACHE_TBL(pdp, pde->pde_namehash);
 	bucket_mtx = DIRCACHE_MTX(pde->pde_namehash);
@@ -377,17 +451,13 @@ pefs_dircache_insert(struct pefs_dircache *pd, struct pefs_tkey *ptk,
 	LIST_INSERT_HEAD(bucket, pde, pde_hash_entry);
 	mtx_unlock(bucket_mtx);
 
-	bucket = DIRCACHE_ENCTBL(pdp, pde->pde_encnamehash);
-	bucket_mtx = DIRCACHE_MTX(pde->pde_encnamehash);
-	mtx_lock(bucket_mtx);
-	LIST_INSERT_HEAD(bucket, pde, pde_enchash_entry);
-	mtx_unlock(bucket_mtx);
+	LIST_INSERT_HEAD(&pd->pd_activehead, pde, pde_dir_entry);
+	mtx_unlock(&pd->pd_mtx);
 
 	atomic_add_long(&dircache_entries, 1);
 
-	PEFSDEBUG("pefs_dircache_insert: hash=%x enchash=%x: %s -> %s\n",
-	    pde->pde_namehash, pde->pde_encnamehash,
-	    pde->pde_name, pde->pde_encname);
+	PEFSDEBUG("pefs_dircache_insert: %p %s -> %s\n",
+	    pde, pde->pde_name, pde->pde_encname);
 
 	return (pde);
 }
@@ -402,22 +472,18 @@ pefs_dircache_lookup(struct pefs_dircache *pd, char const *name,
 	uint32_t h;
 
 	MPASS(pd != NULL);
-	MPASS((pd->pd_flags & PD_UPDATING) == 0);
-	MPASS(LIST_EMPTY(DIRCACHE_STALEHEAD(pd)));
 
 	h = dircache_hashname(pd, name, name_len);
 	bucket = DIRCACHE_TBL(pd->pd_pool, h);
 	bucket_mtx = DIRCACHE_MTX(h);
 	mtx_lock(bucket_mtx);
 	LIST_FOREACH(pde, bucket, pde_hash_entry) {
-		if (pde->pde_namehash == h &&
-		    pde->pde_dircache == pd &&
-		    pde->pde_gen == pd->pd_gen &&
-		    pde->pde_namelen == name_len &&
-		    memcmp(pde->pde_name, name, name_len) == 0) {
+		if (pde->pde_dircache == pd &&
+		    dircache_cmp_name(pde, h, name, name_len) != 0) {
 			mtx_unlock(bucket_mtx);
 			PEFSDEBUG("pefs_dircache_lookup: found %s -> %s\n",
 			    pde->pde_name, pde->pde_encname);
+			dircache_retry_set(pd, pde);
 			return (pde);
 		}
 	}
@@ -440,13 +506,12 @@ pefs_dircache_enclookup(struct pefs_dircache *pd, char const *encname,
 	bucket_mtx = DIRCACHE_MTX(h);
 	mtx_lock(bucket_mtx);
 	LIST_FOREACH(pde, bucket, pde_enchash_entry) {
-		if (pde->pde_encnamehash == h &&
-		    pde->pde_dircache == pd &&
-		    pde->pde_encnamelen == encname_len &&
-		    memcmp(pde->pde_encname, encname, encname_len) == 0) {
+		if (pde->pde_dircache == pd &&
+		    dircache_cmp_encname(pde, h, encname, encname_len) != 0) {
 			mtx_unlock(bucket_mtx);
 			PEFSDEBUG("pefs_dircache_enclookup: found %s -> %s\n",
 			    pde->pde_name, pde->pde_encname);
+			dircache_retry_set(pd, pde);
 			return (pde);
 		}
 	}
@@ -455,63 +520,38 @@ pefs_dircache_enclookup(struct pefs_dircache *pd, char const *encname,
 	return (NULL);
 }
 
-void
-pefs_dircache_update(struct pefs_dircache_entry *pde)
-{
-	dircache_update(pde, 1);
-}
-
-void
-pefs_dircache_beginupdate(struct pefs_dircache *pd, u_long gen)
-{
-	if (sx_try_upgrade(&pd->pd_lock) == 0) {
-		/* vnode should be locked to avoid races */
-		sx_unlock(&pd->pd_lock);
-		sx_xlock(&pd->pd_lock);
-	}
-	if (gen != 0 && pd->pd_gen != gen) {
-		PEFSDEBUG("pefs_dircache_beginupdate: update: gen=%lu %p\n",
-		    gen, pd);
-		if (!LIST_EMPTY(DIRCACHE_ACTIVEHEAD(pd))) {
-			/* Assert consistent state */
-			MPASS(LIST_EMPTY(DIRCACHE_STALEHEAD(pd)));
-			dircache_expire(pd);
-		}
-		pd->pd_gen = gen;
-		pd->pd_flags |= PD_UPDATING;
-		MPASS(LIST_EMPTY(DIRCACHE_ACTIVEHEAD(pd)));
-	}
-}
-
-void
-pefs_dircache_abortupdate(struct pefs_dircache *pd)
-{
-	sx_assert(&pd->pd_lock, SA_XLOCKED);
-
-	if ((pd->pd_flags & PD_UPDATING) != 0) {
-		PEFSDEBUG("pefs_dircache_abortupdate: gen=%lu %p\n",
-		    pd->pd_gen, pd);
-		dircache_expire(pd);
-		pd->pd_flags &= ~PD_UPDATING;
-	}
-	DIRCACHE_ASSERT(pd);
-}
-
-void
-pefs_dircache_endupdate(struct pefs_dircache *pd)
+struct pefs_dircache_entry *
+pefs_dircache_lookup_retry(struct pefs_dircache *pd, char const *name,
+    size_t name_len)
 {
 	struct pefs_dircache_entry *pde;
+	u_int i;
 
-	sx_assert(&pd->pd_lock, SA_XLOCKED);
-
-	if ((pd->pd_flags & PD_UPDATING) == 0) {
-		DIRCACHE_ASSERT(pd);
-		return;
+	for (i = 0; i < PEFS_DIRCACHE_RETRY_COUNT; i++) {
+		pde = (void *)atomic_load_acq_ptr(
+		    (volatile uintptr_t *)&pd->pd_retry[i]);
+		if (pde != NULL && pde->pde_dircache == pd &&
+		    pde->pde_namelen == name_len &&
+		    memcmp(pde->pde_name, name, name_len) == 0)
+			return (pde);
 	}
+	return (NULL);
+}
 
-	while (!LIST_EMPTY(DIRCACHE_STALEHEAD(pd))) {
-		pde = LIST_FIRST(DIRCACHE_STALEHEAD(pd));
-		dircache_entry_free(pde);
+struct pefs_dircache_entry *
+pefs_dircache_enclookup_retry(struct pefs_dircache *pd, char const *encname,
+    size_t encname_len)
+{
+	struct pefs_dircache_entry *pde;
+	u_int i;
+
+	for (i = 0; i < PEFS_DIRCACHE_RETRY_COUNT; i++) {
+		pde = (void *)atomic_load_acq_ptr(
+		    (volatile uintptr_t *)&pd->pd_retry[i]);
+		if (pde != NULL && pde->pde_dircache == pd &&
+		    pde->pde_encnamelen == encname_len &&
+		    memcmp(pde->pde_encname, encname, encname_len) == 0)
+			return (pde);
 	}
-	pd->pd_flags &= ~PD_UPDATING;
+	return (NULL);
 }

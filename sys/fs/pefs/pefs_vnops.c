@@ -114,6 +114,10 @@ pefs_getgen(struct vnode *vp, struct ucred *cred)
 	struct vattr va;
 	int error;
 
+	if (!pefs_dircache_enable ||
+	    ((VFS_TO_PEFS(vp->v_mount)->pm_flags & PM_DIRCACHE) == 0))
+		return (0);
+
 	error = VOP_GETATTR(PEFS_LOWERVP(vp), &va, cred);
 	if (error != 0)
 		return (0);
@@ -135,15 +139,6 @@ pefs_tkey_cmp(struct pefs_tkey *a, struct pefs_tkey *b)
 	return (r);
 }
 
-static __inline int
-pefs_cache_active(struct vnode *vp)
-{
-	struct pefs_mount *pm = VFS_TO_PEFS(vp->v_mount);
-
-	return (pefs_dircache_enable &&
-	    (pm->pm_flags & PM_DIRCACHE) != 0);
-}
-
 static struct pefs_dircache_entry *
 pefs_cache_dirent(struct pefs_dircache *pd, struct dirent *de,
     struct pefs_ctx *ctx, struct pefs_key *pk)
@@ -154,9 +149,7 @@ pefs_cache_dirent(struct pefs_dircache *pd, struct dirent *de,
 	int name_len;
 
 	cache = pefs_dircache_enclookup(pd, de->d_name, de->d_namlen);
-	if (cache != NULL)
-		pefs_dircache_update(cache);
-	else {
+	if (cache == NULL) {
 		name_len = pefs_name_decrypt(ctx, pk, &ptk,
 		    de->d_name, de->d_namlen, buf, sizeof(buf));
 		if (name_len <= 0)
@@ -280,14 +273,14 @@ pefs_enccn_create_node(struct pefs_enccn *pec, struct vnode *dvp,
 }
 
 static void
-pefs_enccn_parsedir(struct pefs_dircache *pd, struct pefs_ctx *ctx,
+pefs_lookup_parsedir(struct pefs_dircache *pd, struct pefs_ctx *ctx,
     struct pefs_key *pk, void *mem, size_t sz, char *name, size_t name_len,
     struct pefs_dircache_entry **retval)
 {
 	struct pefs_dircache_entry *cache;
 	struct dirent *de;
 
-	PEFSDEBUG("pefs_enccn_parsedir: lookup %.*s\n", (int)name_len, name);
+	PEFSDEBUG("pefs_lookup_parsedir: lookup %.*s\n", (int)name_len, name);
 	cache = NULL;
 	for (de = (struct dirent*) mem; sz > DIRENT_MINSIZE;
 			sz -= de->d_reclen,
@@ -310,49 +303,35 @@ pefs_enccn_parsedir(struct pefs_dircache *pd, struct pefs_ctx *ctx,
 }
 
 static int
-pefs_enccn_lookup(struct pefs_enccn *pec, struct vnode *dvp,
+pefs_lookup_readdir(struct pefs_enccn *pec, u_long gen, struct vnode *dvp,
     struct componentname *cnp)
 {
 	struct uio *uio;
-	struct vnode *ldvp = PEFS_LOWERVP(dvp);
-	struct pefs_node *dpn = VP_TO_PN(dvp);
+	struct vnode *ldvp;
+	struct pefs_node *dpn;
 	struct pefs_chunk pc;
 	struct pefs_ctx *ctx;
 	struct pefs_dircache_entry *cache;
 	struct pefs_key *dpn_key;
 	off_t offset;
-	u_long dgen;
 	int eofflag, error;
+
+	ldvp = PEFS_LOWERVP(dvp);
+	dpn = VP_TO_PN(dvp);
 
 	MPASS(pec != NULL && dvp != NULL && cnp != NULL);
 
-	if ((cnp->cn_flags & ISDOTDOT) ||
-	    pefs_name_skip(cnp->cn_nameptr, cnp->cn_namelen)) {
-		pefs_enccn_set(pec, NULL, cnp->cn_nameptr, cnp->cn_namelen,
-		    cnp);
-		return (0);
-	}
-
-	PEFSDEBUG("pefs_enccn_lookup: name=%.*s op=%d\n",
+	PEFSDEBUG("pefs_lookup_readdir: name=%.*s op=%d\n",
 	    (int)cnp->cn_namelen, cnp->cn_nameptr, (int) cnp->cn_nameiop);
 
 	error = 0;
-	dgen = pefs_getgen(dvp, cnp->cn_cred);
-	pefs_dircache_lock(dpn->pn_dircache);
-	if (pefs_cache_active(dvp) &&
-	    pefs_dircache_valid(dpn->pn_dircache, dgen)) {
-		cache = pefs_dircache_lookup(dpn->pn_dircache,
-		    cnp->cn_nameptr, cnp->cn_namelen);
-		goto out;
-	}
-
 	offset = 0;
 	eofflag = 0;
 	cache = NULL;
 	ctx = pefs_ctx_get();
 	pefs_chunk_create(&pc, dpn, PEFS_SECTOR_SIZE);
 	dpn_key = pefs_node_key(dpn);
-	pefs_dircache_beginupdate(dpn->pn_dircache, dgen);
+	pefs_dircache_beginupdate(dpn->pn_dircache);
 	while (!eofflag) {
 		uio = pefs_chunk_uio(&pc, offset, UIO_READ);
 		error = VOP_READDIR(ldvp, uio, cnp->cn_cred, &eofflag,
@@ -364,24 +343,24 @@ pefs_enccn_lookup(struct pefs_enccn *pec, struct vnode *dvp,
 		if (pc.pc_size == uio->uio_resid)
 			break;
 		pefs_chunk_setsize(&pc, pc.pc_size - uio->uio_resid);
-		pefs_enccn_parsedir(dpn->pn_dircache, ctx, dpn_key,
+		pefs_lookup_parsedir(dpn->pn_dircache, ctx, dpn_key,
 		    pc.pc_base, pc.pc_size, cnp->cn_nameptr, cnp->cn_namelen,
 		    &cache);
 		pefs_chunk_restore(&pc);
 	}
-	pefs_dircache_endupdate(dpn->pn_dircache);
+	if (eofflag != 0 && error == 0)
+		pefs_dircache_endupdate(dpn->pn_dircache, gen);
+	else
+		pefs_dircache_abortupdate(dpn->pn_dircache);
 
 	pefs_ctx_free(ctx);
 	pefs_key_release(dpn_key);
 	pefs_chunk_free(&pc, dpn);
-out:
 	if (cache != NULL && error == 0)
 		pefs_enccn_set(pec, &cache->pde_tkey,
 		    cache->pde_encname, cache->pde_encnamelen, cnp);
 	else if (cache == NULL && error == 0)
 		error = ENOENT;
-
-	pefs_dircache_unlock(dpn->pn_dircache);
 
 	return (error);
 }
@@ -401,19 +380,13 @@ pefs_enccn_get(struct pefs_enccn *pec, struct vnode *dvp, struct vnode *vp,
 		return (0);
 	}
 
-	if (pefs_cache_active(dvp)) {
-		pefs_dircache_lock(dpn->pn_dircache);
-		/* Do not check if cache valid check keys are equal instead */
-		cache = pefs_dircache_lookup(dpn->pn_dircache,
-		    cnp->cn_nameptr, cnp->cn_namelen);
-		if (cache != NULL &&
-		    pefs_tkey_cmp(&cache->pde_tkey, &pn->pn_tkey) == 0) {
-			pefs_enccn_set(pec, &pn->pn_tkey,
-			    cache->pde_encname, cache->pde_encnamelen, cnp);
-			pefs_dircache_unlock(dpn->pn_dircache);
-			return (0);
-		}
-		pefs_dircache_unlock(dpn->pn_dircache);
+	cache = pefs_dircache_lookup_retry(dpn->pn_dircache,
+	    cnp->cn_nameptr, cnp->cn_namelen);
+	if (cache != NULL &&
+	    pefs_tkey_cmp(&cache->pde_tkey, &pn->pn_tkey) == 0) {
+		pefs_enccn_set(pec, &pn->pn_tkey,
+		    cache->pde_encname, cache->pde_encnamelen, cnp);
+		return (0);
 	}
 
 	error = pefs_enccn_create(pec, pn->pn_tkey.ptk_key,
@@ -423,30 +396,7 @@ pefs_enccn_get(struct pefs_enccn *pec, struct vnode *dvp, struct vnode *vp,
 	return (error);
 }
 
-#ifdef PEFS_DEBUG_EXTRA
-static void
-__pefs_enccn_assert_noent(struct vnode *dvp, struct componentname *cnp,
-    const char *file, int line)
-{
-	struct pefs_enccn enccn;
-	int error;
-
-	pefs_enccn_init(&enccn);
-	error = pefs_enccn_lookup(&enccn, dvp, cnp);
-
-	if (error != ENOENT)
-		panic("pefs_enccn assertion failed: %s:%d: "
-		    "unexpected error %d: %*s\n",
-		    file, line, error, (int)cnp->cn_namelen, cnp->cn_nameptr);
-	pefs_enccn_free(&enccn);
-}
-
-#define	PEFS_ENCCN_ASSERT_NOENT(dvp, cnp)	\
-		__pefs_enccn_assert_noent((dvp), (cnp), __FILE__, __LINE__);
-#else
-#define	PEFS_ENCCN_ASSERT_NOENT(dvp, cnp)	\
-		do { } while(0)
-#endif /* PEFS_DEBUG_EXTRA */
+#define	PEFS_ENCCN_ASSERT_NOENT(dvp, cnp)	((void)0)
 
 #define	PEFS_FLUSHKEY_ALL		1
 
@@ -568,6 +518,38 @@ pefs_lookup_lower(struct vnode *dvp, struct vnode **lvpp,
 }
 
 static int
+pefs_lookup_dircache(struct pefs_enccn *enccn, u_long gen, struct vnode *dvp,
+    struct vnode **lvpp, struct componentname *cnp)
+{
+	struct pefs_dircache *pd;
+	struct pefs_dircache_entry *cache;
+	int error;
+
+	pd = VP_TO_PN(dvp)->pn_dircache;
+	while (1) {
+		cache = pefs_dircache_lookup(pd, cnp->cn_nameptr,
+		    cnp->cn_namelen);
+		if (cache == NULL) {
+			if (pefs_dircache_valid(pd, gen))
+				return (ENOENT);
+			return (EINVAL);
+		}
+
+		pefs_enccn_set(enccn, &cache->pde_tkey, cache->pde_encname,
+		    cache->pde_encnamelen, cnp);
+
+		error = pefs_lookup_lower(dvp, lvpp, &enccn->pec_cn);
+		if (error == 0)
+			return (0);
+
+		pefs_enccn_free(enccn);
+		pefs_dircache_expire(cache, 0);
+	}
+	/* unreachable */
+	return (EINVAL);
+}
+
+static int
 pefs_lookup(struct vop_cachedlookup_args *ap)
 {
 	struct componentname *cnp = ap->a_cnp;
@@ -579,6 +561,7 @@ pefs_lookup(struct vop_cachedlookup_args *ap)
 	struct pefs_node *dpn;
 	struct mount *mp;
 	uint64_t flags;
+	u_long gen;
 	int nokey_lookup, skip_lookup;
 	int error;
 
@@ -613,7 +596,11 @@ pefs_lookup(struct vop_cachedlookup_args *ap)
 	}
 
 	if (!nokey_lookup) {
-		error = pefs_enccn_lookup(&enccn, dvp, cnp);
+		lvp = NULL;
+		gen = pefs_getgen(dvp, cnp->cn_cred);
+		error = pefs_lookup_dircache(&enccn, gen, dvp, &lvp, cnp);
+		if (error != 0 && error != ENOENT)
+			error = pefs_lookup_readdir(&enccn, gen, dvp, cnp);
 		if (error == ENOENT && (cnp->cn_flags & ISLASTCN) &&
 		    (cnp->cn_nameiop == CREATE || cnp->cn_nameiop == RENAME ||
 		    (cnp->cn_nameiop == DELETE &&
@@ -635,15 +622,20 @@ pefs_lookup(struct vop_cachedlookup_args *ap)
 		}
 
 		if (error == 0) {
-			error = pefs_lookup_lower(dvp, &lvp, &enccn.pec_cn);
+			/*
+			 * pefs_lookup_dircache could have done
+			 * pefs_lookup_lower already.
+			 */
+			if (lvp == NULL)
+				error = pefs_lookup_lower(dvp, &lvp, &enccn.pec_cn);
 			if (error == 0 || error == EJUSTRETURN)
 				cnp->cn_flags = (cnp->cn_flags & HASBUF) |
 				    (enccn.pec_cn.cn_flags & ~HASBUF);
-			if (error != 0)
+			else
 				PEFSDEBUG("pefs_lookup: lower error = %d\n",
 				    error);
 		} else
-			PEFSDEBUG("pefs_lookup: pefs_enccn_lookup error = %d\n",
+			PEFSDEBUG("pefs_lookup: pefs_lookup_readdir error = %d\n",
 			    error);
 	}
 
@@ -966,7 +958,7 @@ pefs_close(struct vop_close_args *ap)
 }
 
 static int
-pefs_rename_xlock_enter(struct vnode *vp)
+pefs_rename_xlock_enter(struct vnode *vp, int lkflags)
 {
 	volatile u_int *xlockp;
 	int error;
@@ -979,7 +971,7 @@ pefs_rename_xlock_enter(struct vnode *vp)
 	xlockp = &VP_TO_PN(vp)->pn_rename_xlock;
 	atomic_add_acq_int(xlockp, 1);
 
-	error = lockmgr(&vp->v_lock, LK_EXCLUSIVE | LK_INTERLOCK | LK_NOWAIT,
+	error = lockmgr(&vp->v_lock, LK_EXCLUSIVE | LK_INTERLOCK | lkflags,
 	    VI_MTX(vp));
 	return (error);
 
@@ -1044,8 +1036,9 @@ pefs_rename(struct vop_rename_args *ap)
 	struct vnode *tvp = ap->a_tvp;
 	struct componentname *fcnp = ap->a_fcnp;
 	struct componentname *tcnp = ap->a_tcnp;
-	struct vnode *lfdvp, *lfvp, *ltdvp, *ltvp;
 	struct pefs_enccn fenccn, tenccn, txenccn;
+	struct vnode *lfdvp, *lfvp, *ltdvp, *ltvp;
+	struct pefs_tkey *ptk;
 	struct mount *mp;
 	int error, lvp_ref;
 
@@ -1128,6 +1121,9 @@ pefs_rename(struct vop_rename_args *ap)
 	error = pefs_enccn_get(&fenccn, fdvp, fvp, fcnp);
 	if (error != 0)
 		goto out_locked;
+	PEFSDEBUG("pefs_rename: fvp: %.*s %.*s\n",
+	    (int)fcnp->cn_namelen, fcnp->cn_nameptr,
+	    (int)fenccn.pec_cn.cn_namelen, fenccn.pec_cn.cn_nameptr);
 
 	if (tvp != NULL && tvp->v_type != VDIR) {
 		MPASS(fvp->v_type != VDIR);
@@ -1147,6 +1143,9 @@ pefs_rename(struct vop_rename_args *ap)
 			goto out_locked;
 
 		VP_TO_PN(tvp)->pn_flags |= PN_WANTRECYCLE;
+		pefs_dircache_expire_encname(VP_TO_PN(tdvp)->pn_dircache,
+		    txenccn.pec_cn.cn_nameptr, txenccn.pec_cn.cn_namelen,
+		    PEFS_DF_FORCE_GC);
 		cache_purge(tvp);
 		lvp_ref = 1;
 		vref(lfdvp);
@@ -1154,7 +1153,7 @@ pefs_rename(struct vop_rename_args *ap)
 		vref(ltdvp);
 		VOP_UNLOCK(tvp, 0);
 		ltvp = NULL;
-		error = pefs_rename_xlock_enter(tdvp);
+		error = pefs_rename_xlock_enter(tdvp, LK_NOWAIT);
 		if (error != 0) {
 			PEFSDEBUG("pefs_rename: failed to acquire interlock\n");
 			error = vfs_busy(tdvp->v_mount, 0);
@@ -1176,7 +1175,20 @@ pefs_rename(struct vop_rename_args *ap)
 		error = pefs_enccn_get(&tenccn, tdvp, tvp, tcnp);
 		if (error != 0)
 			goto out_locked;
+		PEFSDEBUG("pefs_rename: tvp VDIR: %.*s %.*s\n",
+		    (int)tcnp->cn_namelen, tcnp->cn_nameptr,
+		    (int)tenccn.pec_cn.cn_namelen, tenccn.pec_cn.cn_nameptr);
 		VP_TO_PN(tvp)->pn_flags |= PN_WANTRECYCLE;
+		pefs_dircache_expire_encname(VP_TO_PN(tdvp)->pn_dircache,
+		    tenccn.pec_cn.cn_nameptr, tenccn.pec_cn.cn_namelen,
+		    PEFS_DF_FORCE_GC);
+		cache_purge(tvp);
+		error = pefs_rename_xlock_enter(fvp, 0);
+		if (error != 0) {
+			PEFSDEBUG("pefs_rename: VDIR fvp xlock failed\n");
+			pefs_rename_xlock_abort(fvp);
+			goto out_locked;
+		}
 	} else {
 		error = pefs_enccn_create(&tenccn, fenccn.pec_tkey.ptk_key,
 		    fenccn.pec_tkey.ptk_tweak, tcnp);
@@ -1196,6 +1208,10 @@ pefs_rename(struct vop_rename_args *ap)
 	} else {
 		lvp_ref = 0;
 	}
+
+	pefs_dircache_expire_encname(VP_TO_PN(fdvp)->pn_dircache,
+	    fenccn.pec_cn.cn_nameptr, fenccn.pec_cn.cn_namelen,
+	    0);
 
 	error = VOP_RENAME(lfdvp, lfvp, &fenccn.pec_cn, ltdvp, ltvp,
 	    &tenccn.pec_cn);
@@ -1227,6 +1243,21 @@ pefs_rename(struct vop_rename_args *ap)
 			VOP_UNLOCK(ltdvp, 0);
 		}
 		pefs_rename_xlock_exit(tdvp);
+	}
+	if (tvp != NULL && tvp->v_type == VDIR) {
+		if (error == 0) {
+			lockmgr_assert(&fvp->v_lock, KA_XLOCKED);
+			vn_lock(fvp, LK_EXCLUSIVE | LK_RETRY);
+			if (fvp->v_data != NULL) {
+				VP_TO_PN(fvp)->pn_flags |= PN_WANTRECYCLE;
+				ptk = &VP_TO_PN(fvp)->pn_tkey;
+				MPASS(ptk->ptk_key == tenccn.pec_tkey.ptk_key);
+				memcpy(ptk->ptk_tweak,
+				    tenccn.pec_tkey.ptk_tweak, PEFS_TWEAK_SIZE);
+			}
+			VOP_UNLOCK(fvp, 0);
+		}
+		pefs_rename_xlock_exit(fvp);
 	}
 
 out_unlocked:
@@ -1449,6 +1480,8 @@ pefs_inactive(struct vop_inactive_args *ap)
 #endif
 	}
 
+	pefs_dircache_gc(pn->pn_dircache);
+
 	if ((pn->pn_flags & PN_WANTRECYCLE) || (pn->pn_flags & PN_HASKEY) == 0)
 #if __FreeBSD_version >= 1000011
 		vrecycle(vp);
@@ -1626,10 +1659,9 @@ pefs_readdir(struct vop_readdir_args *ap)
 	ctx = pefs_ctx_get();
 	pefs_chunk_create(&pc, pn, qmin(uio->uio_resid, DFLTPHYS));
 	pn_key = pefs_node_key(pn);
-	pefs_dircache_lock(pn->pn_dircache);
-	if (!pefs_dircache_valid(pn->pn_dircache, gen) && uio->uio_offset != 0)
+	pefs_dircache_beginupdate(pn->pn_dircache);
+	if (!pefs_dircache_valid(pn->pn_dircache, gen) || uio->uio_offset != 0)
 		gen = 0;
-	pefs_dircache_beginupdate(pn->pn_dircache, gen);
 	while (1) {
 		if (uio->uio_resid < pc.pc_size)
 			pefs_chunk_setsize(&pc, uio->uio_resid);
@@ -1686,8 +1718,8 @@ pefs_readdir(struct vop_readdir_args *ap)
 
 		pefs_chunk_restore(&pc);
 	}
-	if (*eofflag != 0 && error == 0)
-		pefs_dircache_endupdate(pn->pn_dircache);
+	if (*eofflag != 0 && error == 0 && gen != 0)
+		pefs_dircache_endupdate(pn->pn_dircache, gen);
 	else
 		pefs_dircache_abortupdate(pn->pn_dircache);
 
@@ -1701,7 +1733,6 @@ pefs_readdir(struct vop_readdir_args *ap)
 		}
 	}
 
-	pefs_dircache_unlock(pn->pn_dircache);
 	pefs_ctx_free(ctx);
 	pefs_key_release(pn_key);
 	pefs_chunk_free(&pc, pn);
@@ -1760,12 +1791,15 @@ pefs_rmdir(struct vop_rmdir_args *ap)
 	error = VOP_RMDIR(PEFS_LOWERVP(dvp), PEFS_LOWERVP(vp), &enccn.pec_cn);
 	VP_TO_PN(vp)->pn_flags |= PN_WANTRECYCLE;
 
-	pefs_enccn_free(&enccn);
-
 	if (error == 0) {
+		pefs_dircache_expire_encname(VP_TO_PN(dvp)->pn_dircache,
+		    enccn.pec_cn.cn_nameptr, enccn.pec_cn.cn_namelen,
+		    PEFS_DF_FORCE_GC);
 		cache_purge(dvp);
 		cache_purge(vp);
 	}
+
+	pefs_enccn_free(&enccn);
 
 	return (error);
 }
@@ -1821,10 +1855,14 @@ pefs_remove(struct vop_remove_args *ap)
 	error = VOP_REMOVE(PEFS_LOWERVP(dvp), PEFS_LOWERVP(vp), &enccn.pec_cn);
 	VP_TO_PN(vp)->pn_flags |= PN_WANTRECYCLE;
 
-	pefs_enccn_free(&enccn);
-
-	if (error == 0)
+	if (error == 0) {
+		pefs_dircache_expire_encname(VP_TO_PN(dvp)->pn_dircache,
+		    enccn.pec_cn.cn_nameptr, enccn.pec_cn.cn_namelen,
+		    PEFS_DF_FORCE_GC);
 		cache_purge(vp);
+	}
+
+	pefs_enccn_free(&enccn);
 
 	return (error);
 }
