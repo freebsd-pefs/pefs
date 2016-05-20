@@ -2709,6 +2709,18 @@ lower_update:
 }
 
 static int
+pefs_fsync(struct vop_fsync_args *ap)
+{
+	int error;
+
+	error = vop_stdfsync(ap);
+	if (error != 0)
+		return (error);
+	error = VOP_FSYNC(PEFS_LOWERVP(ap->a_vp), ap->a_waitfor, ap->a_td);
+	return (error);
+}
+
+static int
 pefs_setkey(struct vnode *vp, struct pefs_key *pk, struct ucred *cred,
     struct thread *td)
 {
@@ -3059,7 +3071,7 @@ struct vop_vector pefs_vnodeops = {
 #endif
 	.vop_getpages =		vop_stdgetpages,
 	.vop_putpages =		vop_stdputpages,
-	.vop_fsync =		vop_stdfsync,
+	.vop_fsync =		pefs_fsync,
 	.vop_ioctl =		pefs_ioctl,
 	.vop_pathconf =		pefs_pathconf,
 };
