@@ -36,7 +36,6 @@ __FBSDID("$FreeBSD$");
 #include <assert.h>
 #include <ctype.h>
 #include <inttypes.h>
-#include <libgen.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -279,13 +278,11 @@ pefs_key_showind(struct pefs_xkey *xk, int ind)
 static inline void
 pefs_key_shownode(struct pefs_xkey *xk, const char *path)
 {
-	const char *basepath;
 
-	basepath = basename(path);
 	if (xk == NULL)
-		printf("Key(%s): <not specified>\n", basepath);
+		printf("Key(%s): <not specified>\n", path);
 	else
-		printf("Key(%s): %016jx %s\n", basepath,
+		printf("Key(%s): %016jx %s\n", path,
 		    pefs_keyid_as_int(xk->pxk_keyid), pefs_alg_name(xk));
 }
 
