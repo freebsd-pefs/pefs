@@ -1454,40 +1454,48 @@ pefs_inactive(struct vop_inactive_args *ap)
 {
 	struct vnode *vp = ap->a_vp;
 	struct pefs_node *pn = VP_TO_PN(vp);
+	int error;
 
 	MPASS(pn->pn_rename_xlock == 0);
 
-	/*
-	 * Buffers can be still be in use because they are protected only by
-	 * vnode interlock.
-	 * Free remaining buffers in pefs_reclaim.
-	 */
-	pefs_node_buf_free(pn);
-
-	if ((pn->pn_flags & PN_HASKEY) && vp->v_object != NULL) {
+	if (vp->v_object != NULL && ((pn->pn_flags & PN_WANTRECYCLE) != 0 ||
+	    (pn->pn_flags & PN_HASKEY) == 0)) {
 		if (vp->v_object->resident_page_count > 0)
 			PEFSDEBUG("pefs_inactive: vobject has dirty pages: "
 			    "vp=%p count=%d\n",
 			    vp, vp->v_object->resident_page_count);
 #if __FreeBSD_version >= 1000030
 		VM_OBJECT_WLOCK(vp->v_object);
-		vm_object_page_clean(vp->v_object, 0, 0, OBJPC_SYNC);
+		error = !vm_object_page_clean(vp->v_object, 0, 0, OBJPC_SYNC);
 		VM_OBJECT_WUNLOCK(vp->v_object);
 #else
 		VM_OBJECT_LOCK(vp->v_object);
-		vm_object_page_clean(vp->v_object, 0, 0, OBJPC_SYNC);
+		error = !vm_object_page_clean(vp->v_object, 0, 0, OBJPC_SYNC);
 		VM_OBJECT_UNLOCK(vp->v_object);
 #endif
+		if (error != 0) {
+			PEFSDEBUG("pefs_inactive: failed to clean dirty pages: "
+			    "vp %p\n", vp);
+		}
+		error = vinvalbuf(vp, V_SAVE, 0, 0);
+		if (error != 0) {
+			PEFSDEBUG("pefs_inactive: failed to invalidate buffers: "
+			    "vp %p, error %d\n", vp, error);
+		}
 	}
+
+	pefs_node_buf_free(pn);
 
 	pefs_dircache_gc(pn->pn_dircache);
 
-	if ((pn->pn_flags & PN_WANTRECYCLE) || (pn->pn_flags & PN_HASKEY) == 0)
+	if ((pn->pn_flags & PN_WANTRECYCLE) != 0 ||
+	    (pn->pn_flags & PN_HASKEY) == 0) {
 #if __FreeBSD_version >= 1000011
 		vrecycle(vp);
 #else
 		vrecycle(vp, ap->a_td);
 #endif
+	}
 
 	return (0);
 }
