@@ -38,6 +38,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/sched.h>
 #include <sys/smp.h>
 #include <sys/systm.h>
+#include <machine/atomic.h>
 
 #include <fs/pefs/pefs_crypto.h>
 
@@ -60,6 +61,20 @@ fpu_kern_free_ctx(struct fpu_kern_ctx *ctx)
 {
 	free(ctx, M_TEMP);
 }
+#endif
+
+#if __FreeBSD_version < 902507
+static inline uintptr_t pefs_compat_atomic_swap_ptr(volatile void *p, uintptr_t v)
+{
+	uintptr_t expected;
+
+	while (1) {
+		expected = *(volatile uintptr_t *)(p);
+		if (atomic_cmpset_ptr(p, expected, v))
+			return (expected);
+	}
+}
+#define atomic_swap_ptr(p, v)	pefs_compat_atomic_swap_ptr((p), (v))
 #endif
 
 static int

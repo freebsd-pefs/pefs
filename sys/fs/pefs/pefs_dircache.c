@@ -71,6 +71,10 @@ static struct pefs_dircache_pool dircache_global;
 
 static u_long			dircache_hashmask;
 
+#if __FreeBSD_version < 1000500
+#define mtx_padalign		mtx
+#endif
+
 static struct mtx_padalign	dircache_mtxs[MAXCPU];
 
 static uma_zone_t		dircache_zone;

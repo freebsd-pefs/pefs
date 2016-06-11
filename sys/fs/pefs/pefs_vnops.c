@@ -88,7 +88,6 @@ struct pefs_enccn {
 };
 
 static u_long pefs_rename_restarts;
-SYSCTL_DECL(_vfs_pefs);
 SYSCTL_ULONG(_vfs_pefs, OID_AUTO, rename_restarts, CTLFLAG_RD,
     &pefs_rename_restarts, 0,
     "Number of lock failures in rename");
@@ -1373,6 +1372,7 @@ restart:
 		    pn->pn_rename_xlock != 0 &&
 		    VOP_ISLOCKED(lvp) == LK_EXCLUSIVE &&
 		    lockstatus(&vp->v_lock) != LK_EXCLUSIVE) {
+#if __FreeBSD_version >= 1000500
 			if ((flags & LK_TRYUPGRADE) != 0) {
 				VOP_LOCK(lvp, LK_DOWNGRADE |
 				    (flags & LK_RETRY));
@@ -1380,6 +1380,7 @@ restart:
 				error = EBUSY;
 				goto out;
 			}
+#endif
 			if ((flags & LK_NOWAIT) != 0) {
 				VOP_UNLOCK(lvp, 0);
 				atomic_add_long(&pefs_xlock_restarts, 1);
