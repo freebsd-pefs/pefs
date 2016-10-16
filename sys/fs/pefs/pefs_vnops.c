@@ -2101,7 +2101,11 @@ lookupvpg:
 			vm_page_reference(m);
 			vm_page_lock(m);
 			VM_OBJECT_WUNLOCK(vp->v_object);
+#if __FreeBSD_version >= 1200013
+			vm_page_busy_sleep(m, "pefsmr", true);
+#else
 			vm_page_busy_sleep(m, "pefsmr");
+#endif
 			VM_OBJECT_WLOCK(vp->v_object);
 			goto lookupvpg;
 		}
@@ -2134,7 +2138,11 @@ lookupvpg:
 			vm_page_reference(m);
 			vm_page_lock(m);
 			VM_OBJECT_WUNLOCK(vp->v_object);
+#if __FreeBSD_version >= 1200013
+			vm_page_busy_sleep(m, "pefsmr", true);
+#else
 			vm_page_busy_sleep(m, "pefsmr");
+#endif
 			VM_OBJECT_WLOCK(vp->v_object);
 			goto lookupvpg;
 		}
@@ -2418,7 +2426,11 @@ lookupvpg:
 			vm_page_reference(m);
 			vm_page_lock(m);
 			VM_OBJECT_WUNLOCK(vp->v_object);
+#if __FreeBSD_version >= 1200013
+			vm_page_busy_sleep(m, "pefsmw", true);
+#else
 			vm_page_busy_sleep(m, "pefsmw");
+#endif
 			VM_OBJECT_WLOCK(vp->v_object);
 			goto lookupvpg;
 		}
