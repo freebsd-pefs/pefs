@@ -320,7 +320,11 @@ pefs_flushkey(struct mount *mp, struct thread *td, int flags,
 	struct pefs_node *pn;
 	int error;
 
+#if __FreeBSD_version >= 1200013
+	cache_purgevfs(mp, true);
+#else
 	cache_purgevfs(mp);
+#endif
 	vflush(mp, 0, 0, td);
 	rootvp = VFS_TO_PEFS(mp)->pm_rootvp;
 #if __FreeBSD_version >= 1000025
