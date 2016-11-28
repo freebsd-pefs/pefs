@@ -67,6 +67,7 @@ __FBSDID("$FreeBSD$");
 #include <crypto/crypto_verify_bytes.h>
 
 #include <fs/pefs/pefs.h>
+#include <fs/pefs/pefs_compat.h>
 #include <fs/pefs/pefs_dircache.h>
 
 #define	DIRENT_MINSIZE		(sizeof(struct dirent) - (MAXNAMLEN + 1))
@@ -2103,7 +2104,7 @@ lookupvpg:
 			vm_page_reference(m);
 			vm_page_lock(m);
 			VM_OBJECT_WUNLOCK(vp->v_object);
-#if __FreeBSD_version >= 1200013
+#if __FreeBSD_version >= 1200013 || defined(PEFS_OSREL_PAGE_SLEEP_XBUSY)
 			vm_page_busy_sleep(m, "pefsmr", true);
 #else
 			vm_page_busy_sleep(m, "pefsmr");
@@ -2140,7 +2141,7 @@ lookupvpg:
 			vm_page_reference(m);
 			vm_page_lock(m);
 			VM_OBJECT_WUNLOCK(vp->v_object);
-#if __FreeBSD_version >= 1200013
+#if __FreeBSD_version >= 1200013 || defined(PEFS_OSREL_PAGE_SLEEP_XBUSY)
 			vm_page_busy_sleep(m, "pefsmr", true);
 #else
 			vm_page_busy_sleep(m, "pefsmr");
@@ -2428,7 +2429,7 @@ lookupvpg:
 			vm_page_reference(m);
 			vm_page_lock(m);
 			VM_OBJECT_WUNLOCK(vp->v_object);
-#if __FreeBSD_version >= 1200013
+#if __FreeBSD_version >= 1200013 || defined(PEFS_OSREL_PAGE_SLEEP_XBUSY)
 			vm_page_busy_sleep(m, "pefsmw", true);
 #else
 			vm_page_busy_sleep(m, "pefsmw");
