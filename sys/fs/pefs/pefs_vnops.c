@@ -321,7 +321,7 @@ pefs_flushkey(struct mount *mp, struct thread *td, int flags,
 	struct pefs_node *pn;
 	int error;
 
-#if __FreeBSD_version >= 1200013
+#if __FreeBSD_version >= 1200013 || defined(PEFS_OSREL_1200013_CACHE_PURGEVFS)
 	cache_purgevfs(mp, true);
 #else
 	cache_purgevfs(mp);
@@ -2104,7 +2104,7 @@ lookupvpg:
 			vm_page_reference(m);
 			vm_page_lock(m);
 			VM_OBJECT_WUNLOCK(vp->v_object);
-#if __FreeBSD_version >= 1200013 || defined(PEFS_OSREL_PAGE_SLEEP_XBUSY)
+#if __FreeBSD_version >= 1200013 || defined(PEFS_OSREL_1200013_PAGE_SLEEP_XBUSY)
 			vm_page_busy_sleep(m, "pefsmr", true);
 #else
 			vm_page_busy_sleep(m, "pefsmr");
@@ -2141,7 +2141,7 @@ lookupvpg:
 			vm_page_reference(m);
 			vm_page_lock(m);
 			VM_OBJECT_WUNLOCK(vp->v_object);
-#if __FreeBSD_version >= 1200013 || defined(PEFS_OSREL_PAGE_SLEEP_XBUSY)
+#if __FreeBSD_version >= 1200013 || defined(PEFS_OSREL_1200013_PAGE_SLEEP_XBUSY)
 			vm_page_busy_sleep(m, "pefsmr", true);
 #else
 			vm_page_busy_sleep(m, "pefsmr");
@@ -2429,7 +2429,7 @@ lookupvpg:
 			vm_page_reference(m);
 			vm_page_lock(m);
 			VM_OBJECT_WUNLOCK(vp->v_object);
-#if __FreeBSD_version >= 1200013 || defined(PEFS_OSREL_PAGE_SLEEP_XBUSY)
+#if __FreeBSD_version >= 1200013 || defined(PEFS_OSREL_1200013_PAGE_SLEEP_XBUSY)
 			vm_page_busy_sleep(m, "pefsmw", true);
 #else
 			vm_page_busy_sleep(m, "pefsmw");

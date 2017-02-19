@@ -27,10 +27,23 @@
  */
 
 
-#if P_OSREL_MAJOR(__FreeBSD_version) == 11 && __FreeBSD_version >= 1100506
-#define PEFS_OSREL_PAGE_SLEEP_XBUSY
+/*
+ * Use PEFS_OSREL defines for backported changes.
+ * Format:
+ * PEFS_OSREL_<corresponding current version>_<name>
+ */
+
+#if P_OSREL_MAJOR(__FreeBSD_version) == 11
+#if __FreeBSD_version >= 1100506
+#define PEFS_OSREL_1200013_PAGE_SLEEP_XBUSY
+#endif
+#if __FreeBSD_version >= 1100509
+#define PEFS_OSREL_1200013_CACHE_PURGEVFS
+#endif
 #endif
 
-#if P_OSREL_MAJOR(__FreeBSD_version) == 10 && __FreeBSD_version >= 1003510
-#define PEFS_OSREL_PAGE_SLEEP_XBUSY
+#if P_OSREL_MAJOR(__FreeBSD_version) == 10
+#if __FreeBSD_version >= 1003510
+#define PEFS_OSREL_1200013_PAGE_SLEEP_XBUSY
+#endif
 #endif
