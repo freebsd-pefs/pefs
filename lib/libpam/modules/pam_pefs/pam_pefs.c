@@ -1,6 +1,7 @@
 /*-
  * Copyright (c) 2003 Networks Associates Technology, Inc.
  * Copyright (c) 2009 Gleb Kurtsou <gleb@FreeBSD.org>
+ * Copyright (c) 2011,2015 David Naylor <dbn@FreeBSD.org>
  * All rights reserved.
  *
  * This software was developed for the FreeBSD Project by ThinkSec AS and
@@ -37,9 +38,12 @@
 __FBSDID("$FreeBSD$");
 
 #include <sys/param.h>
+#include <sys/ipc.h>
 #include <sys/ioctl.h>
 #include <sys/wait.h>
+#include <sys/shm.h>
 #include <sys/stat.h>
+#include <sys/types.h>
 
 #include <errno.h>
 #include <fcntl.h>
@@ -71,9 +75,11 @@ __FBSDID("$FreeBSD$");
 
 #define	PEFS_OPT_IGNORE_MISSING		"ignore_missing"
 #define	PEFS_OPT_DELKEYS		"delkeys"
+#define	PEFS_OPT_USE_SHM		"use_shm"
 
 #define	PAM_PEFS_KEYS			"pam_pefs_keys"
 #define	PAM_PEFS_SESSION		"pam_pefs_session"
+#define	PAM_PEFS_SHMID			"pam_pefs_shmid"
 
 #define	PEFS_SESSION_SIZE		16
 #define	PEFS_SESSION_DIR		"/var/run/pefs"
@@ -83,6 +89,7 @@ __FBSDID("$FreeBSD$");
 	(O_RDWR | O_NONBLOCK | O_CREAT | O_EXLOCK)
 
 static int pam_pefs_debug;
+static int pam_pefs_use_shm;
 
 void
 pefs_warn(const char *fmt, ...)
@@ -279,13 +286,17 @@ static int
 pam_pefs_checkfs(const char *homedir)
 {
 	char fsroot[MAXPATHLEN];
-	int error;
+	char abshomedir[MAXPATHLEN];
 
-	error = pefs_getfsroot(homedir, 0, fsroot, sizeof(fsroot));
-	if (error != 0) {
-		pefs_warn("file system is not mounted: %s", homedir);
+	if (realpath(homedir, abshomedir) == NULL) {
+		pefs_warn("unable to resulve home dir: %s", homedir);
 		return (PAM_USER_UNKNOWN);
-	} if (strcmp(fsroot, homedir) != 0) {
+	}
+	if (pefs_getfsroot(abshomedir, 0, fsroot, sizeof(fsroot)) != 0) {
+		pefs_warn("file system is not mounted: %s", abshomedir);
+		return (PAM_USER_UNKNOWN);
+	}
+	if (strcmp(fsroot, abshomedir) != 0) {
 		pefs_warn("file system is not mounted on home dir: %s", fsroot);
 		return (PAM_USER_UNKNOWN);
 	}
@@ -384,6 +395,128 @@ pam_pefs_freekeys(pam_handle_t *pamh __unused, void *data, int pam_err __unused)
 	free(kch);
 }
 
+static void
+pam_pefs_store_key(pam_handle_t *pamh, struct pefs_keychain_head *kch)
+{
+	struct pefs_keychain *kc;
+	struct pefs_xkey *shmkey;
+	size_t shmsize;
+	int keycnt, shmid;
+	char *id_hex;
+	void *shmdata;
+	if (!pam_pefs_use_shm)
+		pam_set_data(pamh, PAM_PEFS_KEYS, kch, pam_pefs_freekeys);
+	else {
+		keycnt = 0;
+		TAILQ_FOREACH(kc, kch, kc_entry)
+			keycnt++;
+		shmsize = sizeof(int) + (sizeof(*shmkey) * keycnt);
+
+		if ((shmid = shmget(IPC_PRIVATE, shmsize, SHM_R | SHM_W)) > 0
+		    && (shmdata = shmat(shmid, 0, 0)) != (void *)-1
+		    && (id_hex = calloc(1, sizeof(int) * 2 + 3)) != NULL) {
+			sprintf(id_hex, "%#.*x", (int)(sizeof(int) * 2), shmid);
+			pam_setenv(pamh, PAM_PEFS_KEYS, id_hex, 1);
+			free(id_hex);
+			*(int *)shmdata = keycnt;
+			shmkey = shmdata + sizeof(keycnt);
+			TAILQ_FOREACH(kc, kch, kc_entry)
+				memcpy(shmkey++, &(kc->kc_key), sizeof(*shmkey));
+		}
+		else
+			pefs_warn("failed to allocate shared memory for key");
+
+		if (shmdata != (void *)-1)
+			shmdt(shmdata);
+
+		pefs_keychain_free(kch);
+		free(kch);
+	}
+}
+
+static int
+pam_pefs_retrieve_key(pam_handle_t *pamh, struct pefs_keychain_head **kch)
+{
+	struct pefs_keychain *kc;
+	struct pefs_xkey *shmkey;
+	int keycnt, shmid, status;
+	const char *id_hex;
+	void *shmdata;
+
+	if (!pam_pefs_use_shm)
+		status = pam_get_data(pamh, PAM_PEFS_KEYS, (const void **)kch);
+	else {
+		status = PAM_SYSTEM_ERR;
+		if ((id_hex = pam_getenv(pamh, PAM_PEFS_KEYS)) != NULL
+		    && (shmid = strtol(id_hex, NULL, 16)) > 0
+		    && (shmdata = shmat(shmid, 0, 0)) != (void *)-1
+		    && (*kch = calloc(1, sizeof(**kch))) != NULL) {
+			status = PAM_SUCCESS;
+			TAILQ_INIT(*kch);
+			shmkey = shmdata + sizeof(keycnt);
+			for (keycnt = *(int *)shmdata; keycnt; keycnt--) {
+				if ((kc = calloc(1, sizeof(*kc))) == NULL) {
+					while (!TAILQ_EMPTY(*kch)) {
+						kc = TAILQ_FIRST(*kch);
+						TAILQ_REMOVE(*kch, kc, kc_entry);
+						free(kc);
+					}
+
+					free(*kch);
+					*kch = NULL;
+					status = PAM_SYSTEM_ERR;
+					break;
+				}
+
+				memcpy(&(kc->kc_key), shmkey++, sizeof(*shmkey));
+				TAILQ_INSERT_HEAD(*kch, kc, kc_entry);
+			}
+		}
+
+		if (status != PAM_SUCCESS)
+			pefs_warn("failed to retrieve key from shared memory");
+
+		if (shmdata != (void *)-1)
+			shmdt(shmdata);
+	}
+
+	return status;
+}
+
+static void
+pam_pefs_release_key(pam_handle_t *pamh, struct pefs_keychain_head *kch)
+{
+	size_t shmsize;
+	int keycnt, shmid;
+	const char *id_hex;
+	void *shmdata;
+
+	if (!pam_pefs_use_shm)
+		pam_set_data(pamh, PAM_PEFS_KEYS, NULL, NULL);
+	else {
+		if ((id_hex = pam_getenv(pamh, PAM_PEFS_KEYS)) != NULL
+		    && (shmid = strtol(id_hex, NULL, 16)) > 0
+		    && (shmdata = shmat(shmid, 0, 0)) != (void *)-1) {
+			keycnt = *(int *)shmdata;
+			shmsize = sizeof(keycnt)
+			    + (sizeof(struct pefs_xkey) * keycnt);
+			memset(shmdata, 0, shmsize);
+			shmdt(shmdata);
+		}
+		else
+			pefs_warn("failed to release shared memory for key");
+
+		if (shmid > 0)
+			shmctl(shmid, IPC_RMID, NULL);
+		if (id_hex != NULL)
+			pam_setenv(pamh, PAM_PEFS_KEYS, "", 1);
+		if (kch != NULL) {
+			pefs_keychain_free(kch);
+			free(kch);
+		}
+	}
+}
+
 PAM_EXTERN int
 pam_sm_authenticate(pam_handle_t *pamh, int flags __unused,
     int argc __unused, const char *argv[] __unused)
@@ -405,6 +538,7 @@ pam_sm_authenticate(pam_handle_t *pamh, int flags __unused,
 		return (PAM_AUTH_ERR);
 
 	pam_pefs_debug = (openpam_get_option(pamh, PAM_OPT_DEBUG) != NULL);
+	pam_pefs_use_shm = (openpam_get_option(pamh, PEFS_OPT_USE_SHM) != NULL);
 
 	chainflags = PEFS_KEYCHAIN_USE;
 	if (openpam_get_option(pamh, PEFS_OPT_IGNORE_MISSING) != NULL)
@@ -447,8 +581,7 @@ retry:
 		pam_err = pam_pefs_getkeys(kch, pwd->pw_dir, passphrase,
 		    chainflags);
 		if (pam_err == PAM_SUCCESS)
-			pam_set_data(pamh, PAM_PEFS_KEYS, kch,
-			    pam_pefs_freekeys);
+			pam_pefs_store_key(pamh, kch);
 		else
 			free(kch);
 
@@ -499,10 +632,10 @@ pam_sm_open_session(pam_handle_t *pamh, int flags __unused,
 		return (PAM_SYSTEM_ERR);
 
 	pam_pefs_debug = (openpam_get_option(pamh, PAM_OPT_DEBUG) != NULL);
+	pam_pefs_use_shm = (openpam_get_option(pamh, PEFS_OPT_USE_SHM) != NULL);
 	opt_delkeys = (openpam_get_option(pamh, PEFS_OPT_DELKEYS) != NULL);
 
-	pam_err = pam_get_data(pamh, PAM_PEFS_KEYS,
-	    (const void **)(void *)&kch);
+	pam_err = pam_pefs_retrieve_key(pamh, &kch);
 	if (pam_err != PAM_SUCCESS || kch == NULL || TAILQ_EMPTY(kch)) {
 		pam_err = PAM_SUCCESS;
 		opt_delkeys = 0;
@@ -529,7 +662,7 @@ pam_sm_open_session(pam_handle_t *pamh, int flags __unused,
 
 out:
 	/* Remove keys from memory */
-	pam_set_data(pamh, PAM_PEFS_KEYS, NULL, NULL);
+	pam_pefs_release_key(pamh, kch);
 
 	/* Increment login count */
 	if (pam_err == PAM_SUCCESS && opt_delkeys) {
