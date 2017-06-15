@@ -2062,7 +2062,7 @@ pefs_ismapped(struct vnode *vp)
 	if (object == NULL)
 		return (0);
 	if (object->resident_page_count > 0
-#if __FreeBSD_version < 1200014
+#if __FreeBSD_version < 1200014 && !defined(PEFS_OSREL_1200014_VM_PAGE_CACHE)
             ||
 #if __FreeBSD_version >= 1000030
 	    !vm_object_cache_is_empty(object)
@@ -2459,7 +2459,7 @@ lookupvpg:
 		}
 		return (EJUSTRETURN);
 	}
-#if __FreeBSD_version < 1200014
+#if __FreeBSD_version < 1200014 && !defined(PEFS_OSREL_1200014_VM_PAGE_CACHE)
 	if (vm_page_is_cached(vp->v_object, idx)) {
 		PEFSDEBUG("pefs_write: free cache: 0x%jx\n",
 		    uio->uio_offset - moffset);
@@ -2537,7 +2537,7 @@ lookupvpg:
 		}
 		return (EJUSTRETURN);
 	}
-#if __FreeBSD_version < 1200014
+#if __FreeBSD_version < 1200014 && !defined(PEFS_OSREL_1200014_VM_PAGE_CACHE)
 #if __FreeBSD_version >= 1000030
 	if (vm_page_is_cached(vp->v_object, idx))
 #else

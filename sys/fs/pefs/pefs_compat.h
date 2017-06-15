@@ -40,6 +40,9 @@
 #if __FreeBSD_version >= 1100509
 #define PEFS_OSREL_1200013_CACHE_PURGEVFS
 #endif
+#if __FreeBSD_version >= 1100514
+#define PEFS_OSREL_1200014_VM_PAGE_CACHE
+#endif
 #endif
 
 #if P_OSREL_MAJOR(__FreeBSD_version) == 10
