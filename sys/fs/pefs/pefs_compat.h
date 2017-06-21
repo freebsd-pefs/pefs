@@ -43,6 +43,9 @@
 #if __FreeBSD_version >= 1100514
 #define PEFS_OSREL_1200014_VM_PAGE_CACHE
 #endif
+#if __FreeBSD_version >= 1100510
+#define PEFS_OSREL_1200020_M_STATFS
+#endif
 #endif
 
 #if P_OSREL_MAJOR(__FreeBSD_version) == 10

@@ -379,26 +379,34 @@ pefs_quotactl(struct mount *mp, int cmd, uid_t uid, void *arg)
 static int
 pefs_statfs(struct mount *mp, struct statfs *sbp)
 {
+	struct statfs *mstat;
 	int error;
-	struct statfs mstat;
 
-	bzero(&mstat, sizeof(mstat));
+#if __FreeBSD_version >= 1200020 || defined(PEFS_OSREL_1200020_M_STATFS)
+	mstat = malloc(sizeof(struct statfs), M_STATFS, M_WAITOK | M_ZERO);
+#else
+	mstat = malloc(sizeof(struct statfs), M_TEMP, M_WAITOK | M_ZERO);
+#endif
+	error = VFS_STATFS(VFS_TO_PEFS(mp)->pm_lowervfs, mstat);
+	if (error == 0) {
+		/* now copy across the "interesting" information and fake the rest */
+		sbp->f_type = mstat->f_type;
+		sbp->f_flags = mstat->f_flags;
+		sbp->f_bsize = mstat->f_bsize;
+		sbp->f_iosize = mstat->f_iosize;
+		sbp->f_blocks = mstat->f_blocks;
+		sbp->f_bfree = mstat->f_bfree;
+		sbp->f_bavail = mstat->f_bavail;
+		sbp->f_files = mstat->f_files;
+		sbp->f_ffree = mstat->f_ffree;
+	}
 
-	error = VFS_STATFS(VFS_TO_PEFS(mp)->pm_lowervfs, &mstat);
-	if (error != 0)
-		return (error);
-
-	/* now copy across the "interesting" information and fake the rest */
-	sbp->f_type = mstat.f_type;
-	sbp->f_flags = mstat.f_flags;
-	sbp->f_bsize = mstat.f_bsize;
-	sbp->f_iosize = mstat.f_iosize;
-	sbp->f_blocks = mstat.f_blocks;
-	sbp->f_bfree = mstat.f_bfree;
-	sbp->f_bavail = mstat.f_bavail;
-	sbp->f_files = mstat.f_files;
-	sbp->f_ffree = mstat.f_ffree;
-	return (0);
+#if __FreeBSD_version >= 1200020 || defined(PEFS_OSREL_1200020_M_STATFS)
+	free(mstat, M_STATFS);
+#else
+	free(mstat, M_TEMP);
+#endif
+	return (error);
 }
 
 static int
