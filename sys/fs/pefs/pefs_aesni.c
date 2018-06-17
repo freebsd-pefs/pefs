@@ -84,7 +84,6 @@ pefs_aesni_keysetup(const struct pefs_session *xses,
 	const struct pefs_aesni_ses *ses = &xses->o.ps_aesni;
 	struct pefs_aesni_ctx *ctx = &xctx->o.pctx_aesni;
 	struct fpu_kern_ctx *tmpctx = NULL;
-	int error;
 
 	switch (keybits) {
 	case 128:
@@ -105,11 +104,7 @@ pefs_aesni_keysetup(const struct pefs_session *xses,
 		tmpctx = fpu_kern_alloc_ctx(FPU_KERN_NORMAL);
 		if (tmpctx == NULL)
 			return (ENOMEM);
-		error = fpu_kern_enter(curthread, tmpctx, FPU_KERN_NORMAL);
-		if (error != 0) {
-			fpu_kern_free_ctx(tmpctx);
-			return (error);
-		}
+		fpu_kern_enter(curthread, tmpctx, FPU_KERN_NORMAL);
 	}
 
 	aesni_set_enckey(key, ctx->enc_schedule, ctx->rounds);
@@ -156,7 +151,6 @@ static void
 pefs_aesni_enter(struct pefs_session *xses)
 {
 	struct pefs_aesni_ses *ses = &xses->o.ps_aesni;
-	int error;
 
 	if (is_fpu_kern_thread(0)) {
 		ses->fpu_saved = 0;
@@ -170,15 +164,12 @@ pefs_aesni_enter(struct pefs_session *xses)
 		ses->td = curthread;
 		ses->fpu_cpuid = curcpu;
 		critical_exit();
-		error = fpu_kern_enter(ses->td, ses->fpu_ctx, FPU_KERN_NORMAL);
-		if (error == 0) {
-			ses->fpu_saved = 1;
-			return;
-		}
-		DPCPU_ID_SET(ses->fpu_cpuid, pefs_aesni_fpu, ses->fpu_ctx);
-	} else
+		fpu_kern_enter(ses->td, ses->fpu_ctx, FPU_KERN_NORMAL);
+		ses->fpu_saved = 1;
+	} else {
 		critical_exit();
-	ses->fpu_saved = -1;
+		ses->fpu_saved = -1;
+	}
 }
 
 static void
