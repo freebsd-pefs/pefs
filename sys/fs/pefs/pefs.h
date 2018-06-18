@@ -140,6 +140,9 @@ int	pefs_uninit(struct vfsconf *vfsp);
 void	pefs_crypto_init(void);
 void	pefs_crypto_uninit(void);
 
+void	pefs_zone_dtor_bzero(void *mem, int size, void *arg);
+void	pefs_zone_fini_bzero(void *mem, int size);
+
 int	pefs_node_get_nokey(struct mount *mp, struct vnode *lvp,
 	    struct vnode **vpp);
 int	pefs_node_get_haskey(struct mount *mp, struct vnode *lvp,

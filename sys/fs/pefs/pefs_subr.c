@@ -96,7 +96,7 @@ pefs_init(struct vfsconf *vfsp)
 	taskqueue_start_threads(&pefs_taskq, 1, PVFS, "pefs taskq");
 
 	pefs_node_zone = uma_zcreate("pefs_node", sizeof(struct pefs_node),
-	    NULL, NULL, NULL, (uma_fini) bzero, UMA_ALIGN_PTR, 0);
+	    NULL, NULL, NULL, NULL, UMA_ALIGN_PTR, 0);
 
 	pefs_nodehash_tbl = hashinit(desiredvnodes / 8, M_PEFSHASH,
 	    &pefs_nodehash_mask);
@@ -121,6 +121,18 @@ pefs_uninit(struct vfsconf *vfsp)
 	free(pefs_nodehash_tbl, M_PEFSHASH);
 	uma_zdestroy(pefs_node_zone);
 	return (0);
+}
+
+void
+pefs_zone_dtor_bzero(void *mem, int size, void *arg __unused)
+{
+	explicit_bzero(mem, size);
+}
+
+void
+pefs_zone_fini_bzero(void *mem, int size)
+{
+	explicit_bzero(mem, size);
 }
 
 static __inline struct pefs_node_listhead *

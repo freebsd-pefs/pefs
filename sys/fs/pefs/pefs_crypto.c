@@ -100,9 +100,9 @@ void
 pefs_crypto_init(void)
 {
 	pefs_ctx_zone = uma_zcreate("pefs_ctx", sizeof(struct pefs_ctx),
-	    NULL, NULL, NULL, (uma_fini)bzero, UMA_ALIGN_CACHE, 0);
+	    NULL, pefs_zone_dtor_bzero, NULL, NULL, UMA_ALIGN_CACHE, 0);
 	pefs_key_zone = uma_zcreate("pefs_key", sizeof(struct pefs_key),
-	    NULL, NULL, NULL, (uma_fini)bzero, UMA_ALIGN_PTR, 0);
+	    NULL, pefs_zone_dtor_bzero, NULL, NULL, UMA_ALIGN_PTR, 0);
 	pefs_alg_init(&pefs_alg_aes);
 	pefs_alg_init(&pefs_alg_camellia);
 }

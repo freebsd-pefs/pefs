@@ -124,7 +124,7 @@ pefs_dircache_init(void)
 	    UMA_ALIGN_PTR, 0);
 	dircache_entry_zone = uma_zcreate("pefs_dircache_entry",
 	    sizeof(struct pefs_dircache_entry), NULL, NULL, NULL,
-	    (uma_fini) bzero, UMA_ALIGN_PTR, 0);
+	    pefs_zone_fini_bzero, UMA_ALIGN_PTR, 0);
 
 	if (dircache_global_enable != 0) {
 		pefs_dircache_pool_init(&dircache_global);
