@@ -163,13 +163,12 @@ pefs_aesni_enter(struct pefs_session *xses)
 	if (ses->fpu_ctx != NULL) {
 		ses->td = curthread;
 		ses->fpu_cpuid = curcpu;
-		critical_exit();
 		fpu_kern_enter(ses->td, ses->fpu_ctx, FPU_KERN_NORMAL);
 		ses->fpu_saved = 1;
 	} else {
-		critical_exit();
 		ses->fpu_saved = -1;
 	}
+	critical_exit();
 }
 
 static void
