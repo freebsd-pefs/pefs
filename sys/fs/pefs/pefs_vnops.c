@@ -2896,7 +2896,11 @@ pefs_ioctl(struct vop_ioctl_args *ap)
 	int error = 0, i;
 
 	if (mp->mnt_cred->cr_uid != cred->cr_uid) {
+#if __FreeBSD_version >= 1300005
+		error = priv_check_cred(cred, PRIV_VFS_ADMIN);
+#else
 		error = priv_check_cred(cred, PRIV_VFS_ADMIN, 0);
+#endif
 		if (error != 0 && (mp->mnt_flag & MNT_RDONLY) == 0) {
 			vn_lock(pm->pm_rootvp, LK_SHARED | LK_RETRY);
 			error = VOP_ACCESS(mp->mnt_vnodecovered, VWRITE,
