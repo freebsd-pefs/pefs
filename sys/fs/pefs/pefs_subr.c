@@ -126,13 +126,21 @@ pefs_uninit(struct vfsconf *vfsp)
 void
 pefs_zone_dtor_bzero(void *mem, int size, void *arg __unused)
 {
+#if __FreeBSD_version > 1100036
 	explicit_bzero(mem, size);
+#else
+	bzero(mem, size);
+#endif
 }
 
 void
 pefs_zone_fini_bzero(void *mem, int size)
 {
+#if __FreeBSD_version > 1100036
 	explicit_bzero(mem, size);
+#else
+	bzero(mem, size);
+#endif
 }
 
 static __inline struct pefs_node_listhead *
