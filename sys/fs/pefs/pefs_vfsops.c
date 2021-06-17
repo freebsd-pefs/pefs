@@ -47,6 +47,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/vnode.h>
 
 #include <fs/pefs/pefs.h>
+#include <fs/pefs/pefs_compat.h>
 #include <fs/pefs/pefs_dircache.h>
 
 struct pefs_opt_descr {
@@ -193,7 +194,7 @@ pefs_mount(struct mount *mp)
 	 */
 	if ((mp->mnt_vnodecovered->v_op == &pefs_vnodeops) &&
 		VOP_ISLOCKED(mp->mnt_vnodecovered)) {
-		VOP_UNLOCK(mp->mnt_vnodecovered, 0);
+		PEFS_VOP_UNLOCK(mp->mnt_vnodecovered);
 		isvnunlocked = 1;
 	}
 	/*
@@ -204,8 +205,12 @@ pefs_mount(struct mount *mp)
 
 	if (error == 0) {
 		from_free = NULL;
+#if __FreeBSD_version < 1300111
 		error = vn_fullpath(curthread, ndp->ni_vp, &from,
 		    &from_free);
+#else
+		error = vn_fullpath(ndp->ni_vp, &from, &from_free);
+#endif
 		if (error == 0)
 			vfs_mountedfrom(mp, from);
 		else
@@ -227,7 +232,7 @@ pefs_mount(struct mount *mp)
 	 */
 	lowerrootvp = ndp->ni_vp;
 	vn_lock(lowerrootvp, LK_EXCLUSIVE | LK_RETRY);
-	if ((lowerrootvp->v_iflag & VI_DOOMED) != 0) {
+	if (VN_IS_DOOMED(lowerrootvp)) {
 		PEFSDEBUG("pefs_mount: target vnode disappeared\n");
 		vput(lowerrootvp);
 		return (ENOENT);
@@ -301,7 +306,7 @@ pefs_mount(struct mount *mp)
 	/*
 	 * Unlock the node (either the lower or the alias)
 	 */
-	VOP_UNLOCK(vp, 0);
+	PEFS_VOP_UNLOCK(vp);
 
 
 	MNT_ILOCK(mp);
