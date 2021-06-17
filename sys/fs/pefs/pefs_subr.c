@@ -52,6 +52,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/vnode.h>
 
 #include <fs/pefs/pefs.h>
+#include <fs/pefs/pefs_compat.h>
 #include <fs/pefs/pefs_dircache.h>
 
 typedef int	pefs_node_init_fn(struct mount *mp, struct pefs_node *pn,
@@ -243,7 +244,7 @@ pefs_insmntque_dtr(struct vnode *vp, void *_pn)
 
 static int
 pefs_node_lookup_name(struct vnode *lvp, struct vnode *ldvp, struct ucred *cred,
-    char *encname, int *encname_len)
+    char *encname, encname_len_t *encname_len)
 {
 	struct vnode *nldvp;
 	int error, locked, dlocked;
@@ -254,14 +255,18 @@ pefs_node_lookup_name(struct vnode *lvp, struct vnode *ldvp, struct ucred *cred,
 	if (ldvp) {
 		dlocked = VOP_ISLOCKED(ldvp);
 		if (dlocked)
-			VOP_UNLOCK(ldvp, 0);
+			PEFS_VOP_UNLOCK(ldvp);
 	} else
 		dlocked = 0;
 
 	vref(lvp);
-	VOP_UNLOCK(lvp, 0);
+	PEFS_VOP_UNLOCK(lvp);
 	nldvp = lvp;
+#if __FreeBSD_version < 1300123
 	error = vn_vptocnp(&nldvp, cred, encname, encname_len);
+#else
+	error = vn_vptocnp(&nldvp, encname, encname_len);
+#endif
 	if (error == 0) {
 #if __FreeBSD_version >= 900501
 		vrele(nldvp);
@@ -290,7 +295,8 @@ pefs_node_lookup_key(struct pefs_mount *pm, struct vnode *lvp,
 {
 	char *namebuf;
 	char *encname;
-	int error, encname_len, name_len;
+	int error, name_len;
+	encname_len_t encname_len;
 
 	namebuf = malloc((MAXNAMLEN + 1)*2, M_PEFSBUF, M_WAITOK | M_ZERO);
 	encname = namebuf + MAXNAMLEN + 1;
@@ -302,7 +308,7 @@ pefs_node_lookup_key(struct pefs_mount *pm, struct vnode *lvp,
 		return (error);
 	}
 
-	PEFSDEBUG("pefs_node_lookup_key: encname=%.*s\n", encname_len, encname);
+	PEFSDEBUG("pefs_node_lookup_key: encname=%.*s\n", (int)encname_len, encname);
 
 	name_len = pefs_name_decrypt(NULL, pefs_rootkey(pm), ptk,
 	    encname, encname_len, namebuf, MAXNAMLEN + 1);
@@ -311,7 +317,7 @@ pefs_node_lookup_key(struct pefs_mount *pm, struct vnode *lvp,
 		pefs_key_ref(ptk->ptk_key);
 	else
 		PEFSDEBUG("pefs_node_lookup_key: not found: %.*s\n",
-		    encname_len, encname);
+		    (int)encname_len, encname);
 
 	free(namebuf, M_PEFSBUF);
 
@@ -388,7 +394,7 @@ pefs_node_get(struct mount *mp, struct vnode *lvp, struct vnode **vpp,
 
 	if (VOP_ISLOCKED(lvp) != LK_EXCLUSIVE) {
 		vn_lock(lvp, LK_UPGRADE | LK_RETRY);
-		if ((lvp->v_iflag & VI_DOOMED) != 0) {
+		if (VN_IS_DOOMED(lvp)) {
 			printf("pefs_node_get: failed to upgrade lock: lvp %p\n", lvp);
 			return (ENOENT);
 		}

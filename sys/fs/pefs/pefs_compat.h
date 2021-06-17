@@ -53,3 +53,19 @@
 #define PEFS_OSREL_1200013_PAGE_SLEEP_XBUSY
 #endif
 #endif
+
+#if __FreeBSD_version < 1300074
+#define PEFS_VOP_UNLOCK(vp) VOP_UNLOCK(vp, 0)
+#else
+#define PEFS_VOP_UNLOCK(vp) VOP_UNLOCK(vp)
+#endif
+
+#if  __FreeBSD_version < 1300064
+#define	VN_IS_DOOMED(vp)	((vp)->v_iflag & VI_DOOMED)
+#endif
+
+#if __FreeBSD_version < 1300077
+typedef unsigned int encname_len_t;
+#else
+typedef size_t encname_len_t;
+#endif

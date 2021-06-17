@@ -321,7 +321,7 @@ pefs_flushkey(struct mount *mp, struct thread *td, int flags,
 	struct pefs_node *pn;
 	int error;
 
-#if __FreeBSD_version >= 1200013 || defined(PEFS_OSREL_1200013_CACHE_PURGEVFS)
+#if __FreeBSD_version < 1300117 && (__FreeBSD_version >= 1200013 || defined(PEFS_OSREL_1200013_CACHE_PURGEVFS))
 	cache_purgevfs(mp, true);
 #else
 	cache_purgevfs(mp);
@@ -330,16 +330,28 @@ pefs_flushkey(struct mount *mp, struct thread *td, int flags,
 	rootvp = VFS_TO_PEFS(mp)->pm_rootvp;
 #if __FreeBSD_version >= 1000025
 loop:
+#if __FreeBSD_version < 1300113
 	MNT_VNODE_FOREACH_ACTIVE(vp, mp, mvp) {
+#else
+	MNT_VNODE_FOREACH_ALL(vp, mp, mvp) {
+#endif
 		if ((vp->v_type != VREG && vp->v_type != VDIR) ||
 		    vp == rootvp) {
 			VI_UNLOCK(vp);
 			continue;
 		}
+#if __FreeBSD_version < 1300109
 		error = vget(vp, LK_EXCLUSIVE | LK_INTERLOCK, td);
+#else
+		error = vget(vp, LK_EXCLUSIVE | LK_INTERLOCK);
+#endif
 		if (error != 0) {
 			if (error == ENOENT) {
+#if __FreeBSD_version < 1300113
 				MNT_VNODE_FOREACH_ACTIVE_ABORT(mp, mvp);
+#else
+				MNT_VNODE_FOREACH_ALL_ABORT(mp, mvp);
+#endif
 				goto loop;
 			}
 			continue;
@@ -381,7 +393,7 @@ loop:
 		} else if (pk != NULL || (flags & PEFS_FLUSHKEY_ALL) != 0) {
 			pefs_dircache_purge(pn->pn_dircache);
 		}
-		VOP_UNLOCK(vp, 0);
+		PEFS_VOP_UNLOCK(vp);
 		vdrop(vp);
 		MNT_ILOCK(mp);
 	}
@@ -390,7 +402,7 @@ loop:
 	if (pk != NULL || (flags & PEFS_FLUSHKEY_ALL) != 0) {
 		vn_lock(rootvp, LK_EXCLUSIVE | LK_RETRY);
 		pefs_dircache_purge(VP_TO_PN(rootvp)->pn_dircache);
-		VOP_UNLOCK(rootvp, 0);
+		PEFS_VOP_UNLOCK(rootvp);
 	}
 
 	return (0);
@@ -508,11 +520,11 @@ pefs_lookup_lower(struct vnode *dvp, struct vnode **lvpp,
 	error = VOP_LOOKUP(ldvp, &lvp, cnp);
 
 	if ((error == 0 || error == EJUSTRETURN) &&
-	    (dvp->v_iflag & VI_DOOMED) != 0) {
+	    VN_IS_DOOMED(dvp)) {
 		error = ENOENT;
 		if (lvp != NULL)
 			vput(lvp);
-		VOP_UNLOCK(ldvp, 0);
+		PEFS_VOP_UNLOCK(ldvp);
 		vn_lock(dvp, LK_EXCLUSIVE | LK_RETRY);
 	} else if (error == 0) {
 		*lvpp = lvp;
@@ -569,8 +581,8 @@ pefs_lookup(struct vop_cachedlookup_args *ap)
 	int nokey_lookup, skip_lookup;
 	int error;
 
-	PEFSDEBUG("pefs_lookup: op=%lx, name=%.*s\n",
-	    cnp->cn_nameiop, (int)cnp->cn_namelen, cnp->cn_nameptr);
+	PEFSDEBUG("pefs_lookup: op=%jx, name=%.*s\n",
+	    (uintmax_t)cnp->cn_nameiop, (int)cnp->cn_namelen, cnp->cn_nameptr);
 
 	ldvp = PEFS_LOWERVP(dvp);
 	dpn = VP_TO_PN(dvp);
@@ -677,8 +689,8 @@ pefs_lookup(struct vop_cachedlookup_args *ap)
 	if (!nokey_lookup)
 		pefs_enccn_free(&enccn);
 
-	PEFSDEBUG("pefs_lookup: op=%lx, name=%.*s error=%d vp=%p\n",
-	    cnp->cn_nameiop, (int)cnp->cn_namelen, cnp->cn_nameptr, error,
+	PEFSDEBUG("pefs_lookup: op=%jx, name=%.*s error=%d vp=%p\n",
+	    (uintmax_t)cnp->cn_nameiop, (int)cnp->cn_namelen, cnp->cn_nameptr, error,
 	    *ap->a_vpp);
 
 	return (error);
@@ -1016,7 +1028,7 @@ pefs_rename_relock(struct vnode *tdvp)
 
 	atomic_add_long(&pefs_rename_restarts, 1);
 
-	VOP_UNLOCK(tdvp, 0);
+	PEFS_VOP_UNLOCK(tdvp);
 	error = lockmgr(&tdvp->v_lock, LK_EXCLUSIVE, VI_MTX(tdvp));
 	if (error != 0)
 		return (error);
@@ -1155,7 +1167,7 @@ pefs_rename(struct vop_rename_args *ap)
 		vref(lfdvp);
 		vref(lfvp);
 		vref(ltdvp);
-		VOP_UNLOCK(tvp, 0);
+		PEFS_VOP_UNLOCK(tvp);
 		ltvp = NULL;
 		error = pefs_rename_xlock_enter(tdvp, LK_NOWAIT);
 		if (error != 0) {
@@ -1164,7 +1176,7 @@ pefs_rename(struct vop_rename_args *ap)
 			if (error != 0)
 			{
 				pefs_rename_xlock_abort(tdvp);
-				VOP_UNLOCK(tdvp, 0);
+				PEFS_VOP_UNLOCK(tdvp);
 				goto out_unlocked;
 			}
 			mp = tdvp->v_mount;
@@ -1244,7 +1256,7 @@ pefs_rename(struct vop_rename_args *ap)
 				    txenccn.pec_cn.cn_nameptr);
 				vput(ltvp);
 			}
-			VOP_UNLOCK(ltdvp, 0);
+			PEFS_VOP_UNLOCK(ltdvp);
 		}
 		pefs_rename_xlock_exit(tdvp);
 	}
@@ -1259,7 +1271,7 @@ pefs_rename(struct vop_rename_args *ap)
 				memcpy(ptk->ptk_tweak,
 				    tenccn.pec_tkey.ptk_tweak, PEFS_TWEAK_SIZE);
 			}
-			VOP_UNLOCK(fvp, 0);
+			PEFS_VOP_UNLOCK(fvp);
 		}
 		pefs_rename_xlock_exit(fvp);
 	}
@@ -1371,7 +1383,7 @@ restart:
 				    "unsupported lock request %d\n",
 				    ap->a_flags);
 			}
-			VOP_UNLOCK(lvp, 0);
+			PEFS_VOP_UNLOCK(lvp);
 			error = vop_stdlock(ap);
 		} else if (error == 0 && vp->v_data == pn &&
 		    pn->pn_rename_xlock != 0 &&
@@ -1387,7 +1399,7 @@ restart:
 			}
 #endif
 			if ((flags & LK_NOWAIT) != 0) {
-				VOP_UNLOCK(lvp, 0);
+				PEFS_VOP_UNLOCK(lvp);
 				atomic_add_long(&pefs_xlock_restarts, 1);
 				error = EBUSY;
 				goto out;
@@ -1400,7 +1412,7 @@ restart:
 			} else {
 				atomic_add_long(&pefs_xlock_restarts, 1);
 			}
-			VOP_UNLOCK(lvp, 0);
+			PEFS_VOP_UNLOCK(lvp);
 			error = lockmgr(&vp->v_lock, LK_EXCLUSIVE, VI_MTX(vp));
 			if (error == 0)
 				lockmgr(&vp->v_lock, LK_RELEASE, VI_MTX(vp));
@@ -1420,6 +1432,7 @@ out:
  * interlock flag as it applies only to our vnode, not the
  * vnodes below us on the stack.
  */
+#if __FreeBSD_version < 1300074
 static int
 pefs_unlock(struct vop_unlock_args *ap)
 {
@@ -1454,6 +1467,27 @@ pefs_unlock(struct vop_unlock_args *ap)
 
 	return (error);
 }
+#else
+static int
+pefs_unlock(struct vop_unlock_args *ap)
+{
+        struct vnode *vp = ap->a_vp;
+        struct pefs_node *pn;
+        struct vnode *lvp;
+        int error;
+
+	pn = (struct pefs_node *)vp->v_data;
+	if (pn != NULL && (lvp = pn->pn_lowervp) != NULL) {
+                vholdnz(lvp);
+                error = VOP_UNLOCK(lvp);
+                vdrop(lvp);
+        } else {
+                error = vop_stdunlock(ap);
+        }
+
+        return (error);
+}
+#endif
 
 static int
 pefs_inactive(struct vop_inactive_args *ap)
@@ -1547,7 +1581,7 @@ pefs_reclaim(struct vop_reclaim_args *ap)
 	pn->pn_lowervp_dead = lowervp;
 	VI_UNLOCK(vp);
 
-	VOP_UNLOCK(lowervp, 0);
+	PEFS_VOP_UNLOCK(lowervp);
 
 	/* Asynchronously release lower vnode and free pefs node. */
 	pefs_node_asyncfree(pn);
@@ -2113,7 +2147,11 @@ lookupvpg:
 			goto lookupvpg;
 		}
 		vm_page_lock(m);
+#if __FreeBSD_version < 1300035
 		vm_page_hold(m);
+#else
+		vm_page_wire(m);
+#endif
 		vm_page_unlock(m);
 		VM_OBJECT_WUNLOCK(vp->v_object);
 		PEFSDEBUG("pefs_read: mapped: "
@@ -2122,7 +2160,11 @@ lookupvpg:
 		error = uiomove_fromphys(&m, moffset, msize, uio);
 		VM_OBJECT_WLOCK(vp->v_object);
 		vm_page_lock(m);
+#if __FreeBSD_version < 1300035
 		vm_page_unhold(m);
+#else
+		vm_page_unwire(m, PQ_ACTIVE);
+#endif
 		vm_page_unlock(m);
 		VM_OBJECT_WUNLOCK(vp->v_object);
 		if (error != 0) {
@@ -2761,7 +2803,12 @@ pefs_setkey(struct vnode *vp, struct pefs_key *pk, struct ucred *cred,
 	struct pefs_node *pn = VP_TO_PN(vp);
 	struct pefs_enccn fenccn, tenccn;
 	char *namebuf;
-	int error, namelen;
+	int error;
+#if __FreeBSD_version < 1300113
+	int namelen;
+#else
+	size_t namelen;
+#endif
 
 	pefs_enccn_init(&fenccn);
 	pefs_enccn_init(&tenccn);
@@ -2777,7 +2824,11 @@ pefs_setkey(struct vnode *vp, struct pefs_key *pk, struct ucred *cred,
 	namelen = MAXNAMLEN - 1;
 	dvp = vp;
 	vref(vp);
+#if __FreeBSD_version < 1300123
 	error = vn_vptocnp(&dvp, cred, namebuf, &namelen);
+#else
+	error = vn_vptocnp(&dvp, namebuf, &namelen);
+#endif
 	if (error != 0) {
 		PEFSDEBUG("pefs_setkey: vn_vptocnp failed: error=%d; vp=%p\n",
 		    error, vp);
@@ -2802,11 +2853,11 @@ pefs_setkey(struct vnode *vp, struct pefs_key *pk, struct ucred *cred,
 		error = pefs_enccn_get(&fenccn, dvp, vp, &cn);
 	}
 	if (error != 0) {
-		VOP_UNLOCK(vp, 0);
+		PEFS_VOP_UNLOCK(vp);
 #if __FreeBSD_version >= 900501
 		vput(dvp); /* vref by vn_vptocnp */
 #else
-		VOP_UNLOCK(dvp, 0);
+		PEFS_VOP_UNLOCK(dvp);
 		vdrop(dvp); /* vrele by vn_vptocnp */
 #endif
 		PEFSDEBUG("pefs_setkey: pefs_enccn_get failed: %d\n", error);
@@ -2815,11 +2866,11 @@ pefs_setkey(struct vnode *vp, struct pefs_key *pk, struct ucred *cred,
 	cn.cn_nameiop = RENAME;
 	error = pefs_enccn_create(&tenccn, pk, NULL, &cn);
 	if (error != 0) {
-		VOP_UNLOCK(vp, 0);
+		PEFS_VOP_UNLOCK(vp);
 #if __FreeBSD_version >= 900501
 		vput(dvp); /* vref by vn_vptocnp */
 #else
-		VOP_UNLOCK(dvp, 0);
+		PEFS_VOP_UNLOCK(dvp);
 		vdrop(dvp); /* vrele by vn_vptocnp */
 #endif
 		pefs_enccn_free(&fenccn);
@@ -2830,7 +2881,7 @@ pefs_setkey(struct vnode *vp, struct pefs_key *pk, struct ucred *cred,
 	PEFSDEBUG("pefs_setkey: toname=%s; key=%p\n",
 	    tenccn.pec_cn.cn_nameptr, tenccn.pec_tkey.ptk_key);
 	ldvp = PEFS_LOWERVP(dvp);
-	VOP_UNLOCK(PEFS_LOWERVP(vp), 0);
+	PEFS_VOP_UNLOCK(PEFS_LOWERVP(vp));
 	error = VOP_LOOKUP(ldvp, &lvp, &fenccn.pec_cn);
 	if (error != 0) {
 		PEFSDEBUG("pefs_setkey: lookup faild: %s\n",
@@ -2838,13 +2889,13 @@ pefs_setkey(struct vnode *vp, struct pefs_key *pk, struct ucred *cred,
 #if __FreeBSD_version >= 900501
 		vput(dvp); /* vref by vn_vptocnp */
 #else
-		VOP_UNLOCK(dvp, 0);
+		PEFS_VOP_UNLOCK(dvp);
 		vdrop(dvp); /* vrele by vn_vptocnp */
 #endif
 		goto out_enccn;
 	}
 	MPASS(lvp == PEFS_LOWERVP(vp));
-	VOP_UNLOCK(PEFS_LOWERVP(vp), 0);
+	PEFS_VOP_UNLOCK(PEFS_LOWERVP(vp));
 	error = VOP_LOOKUP(ldvp, &lvp, &tenccn.pec_cn);
 	if (error != EJUSTRETURN) {
 		PEFSDEBUG("pefs_setkey: lookup faild: %s\n",
@@ -2852,7 +2903,7 @@ pefs_setkey(struct vnode *vp, struct pefs_key *pk, struct ucred *cred,
 #if __FreeBSD_version >= 900501
 		vput(dvp); /* vref by vn_vptocnp */
 #else
-		VOP_UNLOCK(dvp, 0);
+		PEFS_VOP_UNLOCK(dvp);
 		vdrop(dvp); /* vrele by vn_vptocnp */
 #endif
 		error = EBUSY;
@@ -2870,7 +2921,7 @@ pefs_setkey(struct vnode *vp, struct pefs_key *pk, struct ucred *cred,
 	if (error == 0) {
 		vn_lock(vp, LK_EXCLUSIVE | LK_RETRY);
 		vgone(vp);
-		VOP_UNLOCK(vp, 0);
+		PEFS_VOP_UNLOCK(vp);
 	}
 
 out_enccn:
@@ -2905,7 +2956,7 @@ pefs_ioctl(struct vop_ioctl_args *ap)
 			vn_lock(pm->pm_rootvp, LK_SHARED | LK_RETRY);
 			error = VOP_ACCESS(mp->mnt_vnodecovered, VWRITE,
 			    cred, td);
-			VOP_UNLOCK(pm->pm_rootvp, 0);
+			PEFS_VOP_UNLOCK(pm->pm_rootvp);
 		}
 		if (error != 0)
 			return (error);
@@ -3111,3 +3162,6 @@ struct vop_vector pefs_vnodeops = {
 	.vop_ioctl =		pefs_ioctl,
 	.vop_pathconf =		pefs_pathconf,
 };
+#if __FreeBSD_version > 1300067
+VFS_VOP_VECTOR_REGISTER(pefs_vnodeops);
+#endif
