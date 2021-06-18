@@ -374,12 +374,49 @@ pefs_root(struct mount *mp, int flags, struct vnode **vpp)
 	*vpp = vp;
 	return (0);
 }
-
+#if __FreeBSD_version < 1400018
 static int
 pefs_quotactl(struct mount *mp, int cmd, uid_t uid, void *arg)
 {
 	return (VFS_QUOTACTL(VFS_TO_PEFS(mp)->pm_lowervfs, cmd, uid, arg));
 }
+#else
+static int
+pefs_quotactl(mp, cmd, uid, arg, mp_busy)
+	struct mount *mp;
+	int cmd;
+	uid_t uid;
+	void *arg;
+	bool *mp_busy;
+{
+	struct mount *lowermp;
+	struct pefs_mount *mntdata;
+	int error;
+	bool unbusy;
+
+	mntdata = (struct pefs_mount *)(mp->mnt_data);
+	lowermp = atomic_load_ptr(&mntdata->pm_lowervfs);
+	KASSERT(*mp_busy == true, ("upper mount not busy"));
+	/*
+	 * See comment in sys_quotactl() for an explanation of why the
+	 * lower mount needs to be busied by the caller of VFS_QUOTACTL()
+	 * but may be unbusied by the implementation.  We must unbusy
+	 * the upper mount for the same reason; otherwise a namei lookup
+	 * issued by the VFS_QUOTACTL() implementation could traverse the
+	 * upper mount and deadlock.
+	 */
+	vfs_unbusy(mp);
+	*mp_busy = false;
+	unbusy = true;
+	error = vfs_busy(lowermp, 0);
+	if (error == 0)
+		error = VFS_QUOTACTL(lowermp, cmd, uid, arg, &unbusy);
+	if (unbusy)
+		vfs_unbusy(lowermp);
+
+	return (error);
+}
+#endif
 
 static int
 pefs_statfs(struct mount *mp, struct statfs *sbp)
