@@ -29,3 +29,6 @@ LDADD= -lutil
 .PATH: ${SYS}/crypto
 .PATH: ${SYS}/crypto/rijndael
 .PATH: ${SYS}/crypto/hmac ${SYS}/crypto/pbkdf2 ${SYS}/crypto/sha2
+
+# Fix build without OBJDIR for shared components
+.NOPATH: ${OBJS}

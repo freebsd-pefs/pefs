@@ -26,6 +26,8 @@
  * $FreeBSD$
  */
 
+#ifdef PEFS_AESNI
+
 #include <crypto/aesni/aesni.h>
 
 struct pefs_aesni_ctx {
@@ -41,3 +43,5 @@ struct pefs_aesni_ses {
 	u_int			fpu_cpuid;
 	int			fpu_saved;
 };
+
+#endif
