@@ -13,7 +13,7 @@ SRCS=	vnode_if.h \
 	pefs_xts.c vmac.c \
 	crypto_verify_bytes.c hmac_sha512.c sha512c.c
 
-.if ${MACHINE_CPUARCH} == "i386" || ${MACHINE_CPUARCH} == "amd64"
+.if (${MACHINE_CPUARCH} == "i386" || ${MACHINE_CPUARCH} == "amd64") && !defined(PEFS_AESNI_DISABLE)
 SRCS+=	pefs_aesni.c
 CFLAGS+= -DPEFS_AESNI
 .endif
