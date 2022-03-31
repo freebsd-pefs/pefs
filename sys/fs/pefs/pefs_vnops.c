@@ -2191,7 +2191,11 @@ lookupvpg:
 			VM_OBJECT_WLOCK(vp->v_object);
 			goto lookupvpg;
 		}
+#if __FreeBSD_version > 130000 /* 63e9755548e4feebf798686ab8bce0cdaaaf7b46 */
+		vm_page_busy_acquire(m, VM_ALLOC_SBUSY);
+#else
 		vm_page_sbusy(m);
+#endif
 		*mp = m;
 	}
 	VM_OBJECT_WUNLOCK(vp->v_object);
@@ -2227,7 +2231,11 @@ lookupvpg:
 		if (vm_page_sleep_if_busy(m, FALSE, "pefsmr"))
 			goto lookupvpg;
 #endif
+#if __FreeBSD_version > 130000 /* 63e9755548e4feebf798686ab8bce0cdaaaf7b46 */
+		vm_page_busy_acquire(m, VM_ALLOC_SBUSY);
+#else
 		vm_page_busy(m);
+#endif
 #if __FreeBSD_version >= 1000030
 		VM_OBJECT_WUNLOCK(vp->v_object);
 #else
@@ -2273,7 +2281,11 @@ lookupvpg:
 		if (vm_page_sleep_if_busy(m, FALSE, "pefsmr"))
 			goto lookupvpg;
 #endif
+#if __FreeBSD_version > 130000 /* 63e9755548e4feebf798686ab8bce0cdaaaf7b46 */
+		vm_page_busy_acquire(m, VM_ALLOC_SBUSY);
+#else
 		vm_page_busy(m);
+#endif
 		*mp = m;
 	}
 
@@ -2479,7 +2491,11 @@ lookupvpg:
 			VM_OBJECT_WLOCK(vp->v_object);
 			goto lookupvpg;
 		}
+#if __FreeBSD_version > 130000 /* 63e9755548e4feebf798686ab8bce0cdaaaf7b46 */
+		vm_page_busy_acquire(m, VM_ALLOC_SBUSY);
+#else
 		vm_page_sbusy(m);
+#endif
 		vm_page_undirty(m);
 		VM_OBJECT_WUNLOCK(vp->v_object);
 		PEFSDEBUG("pefs_write: mapped: "
@@ -2539,12 +2555,20 @@ lookupvpg:
 			vm_page_sleep(m, "pefsmw");
 			goto lookupvpg;
 		}
+#if __FreeBSD_version > 130000 /* 63e9755548e4feebf798686ab8bce0cdaaaf7b46 */
+		vm_page_busy_acquire(m, VM_ALLOC_SBUSY);
+#else
 		vm_page_busy(m);
+#endif
 		vm_page_undirty(m);
 #else
 		if (vm_page_sleep_if_busy(m, FALSE, "pefsmw"))
 			goto lookupvpg;
+#if __FreeBSD_version > 130000 /* 63e9755548e4feebf798686ab8bce0cdaaaf7b46 */
+		vm_page_busy_acquire(m, VM_ALLOC_SBUSY);
+#else
 		vm_page_busy(m);
+#endif
 		vm_page_lock_queues();
 		vm_page_undirty(m);
 		vm_page_unlock_queues();
@@ -2836,7 +2860,9 @@ pefs_setkey(struct vnode *vp, struct pefs_key *pk, struct ucred *cred,
 		return (error);
 	}
 	bzero(&cn, sizeof(cn));
+#if __FreeBSD_version < 1400037
 	cn.cn_thread = td;
+#endif
 	cn.cn_cred = cred;
 	cn.cn_flags = LOCKPARENT | LOCKLEAF | ISLASTCN | SAVENAME;
 	cn.cn_lkflags = LK_EXCLUSIVE;
