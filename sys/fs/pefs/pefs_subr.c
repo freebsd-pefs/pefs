@@ -428,9 +428,17 @@ pefs_node_get(struct mount *mp, struct vnode *lvp, struct vnode **vpp,
 	vp->v_vnlock = lvp->v_vnlock;
 	if (vp->v_vnlock == NULL)
 		panic("pefs_node_get: Passed a NULL vnlock.\n");
+#if __FreeBSD_version > 1400050
+	error = insmntque1(vp, mp);
+	if (error != 0) {
+		pefs_insmntque_dtr(vp, pn);
+		return (error);
+	}
+#else
 	error = insmntque1(vp, mp, pefs_insmntque_dtr, pn);
 	if (error != 0)
 		return (error);
+#endif
 	/*
 	 * Atomically insert our new node into the hash or vget existing
 	 * if someone else has beaten us to it.
