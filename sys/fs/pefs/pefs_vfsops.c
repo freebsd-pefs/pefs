@@ -200,7 +200,11 @@ pefs_mount(struct mount *mp)
 	/*
 	 * Find lower node
 	 */
+#if __FreeBSD_version > 1400042
+	NDINIT(ndp, LOOKUP, FOLLOW, UIO_SYSSPACE, from);
+#else
 	NDINIT(ndp, LOOKUP, FOLLOW, UIO_SYSSPACE, from, curthread);
+#endif
 	error = namei(ndp);
 
 	if (error == 0) {
@@ -225,7 +229,11 @@ pefs_mount(struct mount *mp)
 
 	if (error != 0)
 		return (error);
+#if __FreeBSD_version > 1300134
+	NDFREE_PNBUF(ndp);
+#else
 	NDFREE(ndp, NDF_ONLY_PNBUF);
+#endif
 
 	/*
 	 * Sanity check on lower vnode

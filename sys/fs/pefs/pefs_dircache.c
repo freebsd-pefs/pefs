@@ -233,25 +233,20 @@ dircache_gc_locked(struct pefs_dircache *pd)
 static void
 dircache_entry_expire_locked(struct pefs_dircache_entry *pde)
 {
-	struct pefs_dircache_pool *pdp;
-	struct pefs_dircache_listhead *bucket;
 	struct pefs_dircache *pd;
 	struct mtx_padalign *bucket_mtx;
 
 	pd = pde->pde_dircache;
-	pdp = pd->pd_pool;
 	pde->pde_dircache = NULL;
 
 	LIST_REMOVE(pde, pde_dir_entry);
 	LIST_INSERT_HEAD(&pd->pd_stalehead, pde, pde_dir_entry);
 
-	bucket = DIRCACHE_TBL(pdp, pde->pde_namehash);
 	bucket_mtx = DIRCACHE_MTX(pde->pde_namehash);
 	mtx_lock(bucket_mtx);
 	LIST_REMOVE(pde, pde_hash_entry);
 	mtx_unlock(bucket_mtx);
 
-	bucket = DIRCACHE_ENCTBL(pdp, pde->pde_encnamehash);
 	bucket_mtx = DIRCACHE_MTX(pde->pde_encnamehash);
 	mtx_lock(bucket_mtx);
 	LIST_REMOVE(pde, pde_enchash_entry);
