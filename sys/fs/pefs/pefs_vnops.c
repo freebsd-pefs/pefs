@@ -2191,7 +2191,7 @@ lookupvpg:
 			VM_OBJECT_WLOCK(vp->v_object);
 			goto lookupvpg;
 		}
-#if __FreeBSD_version > 130000 /* 63e9755548e4feebf798686ab8bce0cdaaaf7b46 */
+#if __FreeBSD_version > 1300000 /* 63e9755548e4feebf798686ab8bce0cdaaaf7b46 */
 		vm_page_busy_acquire(m, VM_ALLOC_SBUSY);
 #else
 		vm_page_sbusy(m);
@@ -2231,7 +2231,7 @@ lookupvpg:
 		if (vm_page_sleep_if_busy(m, FALSE, "pefsmr"))
 			goto lookupvpg;
 #endif
-#if __FreeBSD_version > 130000 /* 63e9755548e4feebf798686ab8bce0cdaaaf7b46 */
+#if __FreeBSD_version > 1300000 /* 63e9755548e4feebf798686ab8bce0cdaaaf7b46 */
 		vm_page_busy_acquire(m, VM_ALLOC_SBUSY);
 #else
 		vm_page_busy(m);
@@ -2281,7 +2281,7 @@ lookupvpg:
 		if (vm_page_sleep_if_busy(m, FALSE, "pefsmr"))
 			goto lookupvpg;
 #endif
-#if __FreeBSD_version > 130000 /* 63e9755548e4feebf798686ab8bce0cdaaaf7b46 */
+#if __FreeBSD_version > 1300000 /* 63e9755548e4feebf798686ab8bce0cdaaaf7b46 */
 		vm_page_busy_acquire(m, VM_ALLOC_SBUSY);
 #else
 		vm_page_busy(m);
@@ -2491,7 +2491,7 @@ lookupvpg:
 			VM_OBJECT_WLOCK(vp->v_object);
 			goto lookupvpg;
 		}
-#if __FreeBSD_version > 130000 /* 63e9755548e4feebf798686ab8bce0cdaaaf7b46 */
+#if __FreeBSD_version > 1300000 /* 63e9755548e4feebf798686ab8bce0cdaaaf7b46 */
 		vm_page_busy_acquire(m, VM_ALLOC_SBUSY);
 #else
 		vm_page_sbusy(m);
