@@ -95,7 +95,7 @@ pefs_dircache_valid(struct pefs_dircache *pd, u_quad_t filerev)
 
 	if (filerev == 0)
 		return 0;
-	pd_filerev = atomic_load_acq_long(&pd->pd_filerev);
+	pd_filerev = atomic_load_acq_64(&pd->pd_filerev);
 	return (filerev == pd_filerev);
 }
 
@@ -107,7 +107,7 @@ pefs_dircache_beginupdate(struct pefs_dircache *pd)
 static __inline void
 pefs_dircache_endupdate(struct pefs_dircache *pd, u_quad_t filerev)
 {
-	atomic_store_rel_long(&pd->pd_filerev, filerev);
+	atomic_store_rel_64(&pd->pd_filerev, filerev);
 }
 
 static __inline void
