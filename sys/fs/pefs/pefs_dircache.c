@@ -318,7 +318,7 @@ pefs_dircache_purge(struct pefs_dircache *pd)
 
 	// ASSERT_VOP_ELOCKED
 	mtx_lock(&pd->pd_mtx);
-	atomic_store_rel_long(&pd->pd_gen, 0);
+	atomic_store_rel_long(&pd->pd_filerev, 0);
 	LIST_FOREACH_SAFE(pde, &pd->pd_activehead, pde_dir_entry, tmp) {
 		dircache_entry_expire_locked(pde);
 	}
@@ -336,7 +336,7 @@ pefs_dircache_expire(struct pefs_dircache_entry *pde, u_int dflags)
 	if (pd == NULL)
 		return;
 	mtx_lock(&pd->pd_mtx);
-	atomic_store_rel_long(&pd->pd_gen, 0);
+	atomic_store_rel_long(&pd->pd_filerev, 0);
 	dircache_retry_clear(pd);
 	if (pde->pde_dircache != NULL) {
 		dircache_entry_expire_locked(pde);

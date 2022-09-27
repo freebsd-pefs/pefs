@@ -42,7 +42,7 @@ struct pefs_dircache {
 	struct mtx			pd_mtx;
 	struct pefs_dircache_listhead	pd_activehead;
 	struct pefs_dircache_listhead	pd_stalehead;
-	volatile u_long			pd_gen;
+	volatile u_quad_t               pd_filerev;
 	struct pefs_dircache_pool	*pd_pool;
 	struct pefs_dircache_entry	*pd_retry[PEFS_DIRCACHE_RETRY_COUNT];
 };
@@ -89,14 +89,14 @@ void	pefs_dircache_expire_encname(struct pefs_dircache *pd,
 void	pefs_dircache_gc(struct pefs_dircache *pd);
 
 static __inline int
-pefs_dircache_valid(struct pefs_dircache *pd, u_long gen)
+pefs_dircache_valid(struct pefs_dircache *pd, u_quad_t filerev)
 {
-	u_long pd_gen;
+	u_quad_t pd_filerev;
 
-	if (gen == 0)
+	if (filerev == 0)
 		return 0;
-	pd_gen = atomic_load_acq_long(&pd->pd_gen);
-	return (gen == pd_gen);
+	pd_filerev = atomic_load_acq_long(&pd->pd_filerev);
+	return (filerev == pd_filerev);
 }
 
 static __inline void
@@ -105,9 +105,9 @@ pefs_dircache_beginupdate(struct pefs_dircache *pd)
 }
 
 static __inline void
-pefs_dircache_endupdate(struct pefs_dircache *pd, u_long gen)
+pefs_dircache_endupdate(struct pefs_dircache *pd, u_quad_t filerev)
 {
-	atomic_store_rel_long(&pd->pd_gen, gen);
+	atomic_store_rel_long(&pd->pd_filerev, filerev);
 }
 
 static __inline void
