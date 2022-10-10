@@ -108,21 +108,28 @@ static int	pefs_read_int(struct vnode *vp, struct uio *uio, int ioflag,
 static int	pefs_write_int(struct vnode *vp, struct uio *uio, int ioflag,
 		    struct ucred *cred, u_quad_t nsize);
 
-static __inline u_quad_t
-pefs_getfilerev(struct vnode *vp, struct ucred *cred)
+static __inline void
+pefs_getgen_and_filerev(struct vnode *vp, struct ucred *cred, u_long *gen, u_quad_t *filerev)
 {
 	struct vattr va;
 	int error;
 
 	if (!pefs_dircache_enable ||
-	    ((VFS_TO_PEFS(vp->v_mount)->pm_flags & PM_DIRCACHE) == 0))
-		return (0);
+		((VFS_TO_PEFS(vp->v_mount)->pm_flags & PM_DIRCACHE) == 0)) {
+		*gen = 0;
+		*filerev = 0;
+		return;
+	}
 
 	error = VOP_GETATTR(PEFS_LOWERVP(vp), &va, cred);
-	if (error != 0)
-		return (0);
+	if (error != 0) {
+		*gen = 0;
+		*filerev = 0;
+		return;
+	}
 
-	return (va.va_filerev);
+	*gen = va.va_gen;
+	*filerev = va.va_filerev;
 }
 
 static __inline int
@@ -439,7 +446,7 @@ pefs_lookup_parsedir(struct pefs_dircache *pd, struct pefs_ctx *ctx,
 }
 
 static int
-pefs_lookup_readdir(struct pefs_enccn *pec, u_quad_t filerev, struct vnode *dvp,
+pefs_lookup_readdir(struct pefs_enccn *pec, u_long gen, u_quad_t filerev, struct vnode *dvp,
     struct componentname *cnp)
 {
 	struct uio *uio;
@@ -485,7 +492,7 @@ pefs_lookup_readdir(struct pefs_enccn *pec, u_quad_t filerev, struct vnode *dvp,
 		pefs_chunk_restore(&pc);
 	}
 	if (eofflag != 0 && error == 0)
-		pefs_dircache_endupdate(dpn->pn_dircache, filerev);
+		pefs_dircache_endupdate(dpn->pn_dircache, gen, filerev);
 	else
 		pefs_dircache_abortupdate(dpn->pn_dircache);
 
@@ -534,7 +541,7 @@ pefs_lookup_lower(struct vnode *dvp, struct vnode **lvpp,
 }
 
 static int
-pefs_lookup_dircache(struct pefs_enccn *enccn, u_quad_t filerev , struct vnode *dvp,
+pefs_lookup_dircache(struct pefs_enccn *enccn, u_long gen, u_quad_t filerev , struct vnode *dvp,
     struct vnode **lvpp, struct componentname *cnp)
 {
 	struct pefs_dircache *pd;
@@ -546,7 +553,7 @@ pefs_lookup_dircache(struct pefs_enccn *enccn, u_quad_t filerev , struct vnode *
 		cache = pefs_dircache_lookup(pd, cnp->cn_nameptr,
 		    cnp->cn_namelen);
 		if (cache == NULL) {
-			if (pefs_dircache_valid(pd, filerev))
+			if (pefs_dircache_valid(pd, gen, filerev))
 				return (ENOENT);
 			return (EINVAL);
 		}
@@ -577,6 +584,7 @@ pefs_lookup(struct vop_cachedlookup_args *ap)
 	struct pefs_node *dpn;
 	struct mount *mp;
 	uint64_t flags;
+	u_long gen;
 	u_quad_t filerev;
 	int nokey_lookup, skip_lookup;
 	int error;
@@ -613,10 +621,10 @@ pefs_lookup(struct vop_cachedlookup_args *ap)
 
 	if (!nokey_lookup) {
 		lvp = NULL;
-		filerev = pefs_getfilerev(dvp, cnp->cn_cred);
-		error = pefs_lookup_dircache(&enccn, filerev, dvp, &lvp, cnp);
+		pefs_getgen_and_filerev(dvp, cnp->cn_cred, &gen, &filerev);
+		error = pefs_lookup_dircache(&enccn, gen, filerev, dvp, &lvp, cnp);
 		if (error != 0 && error != ENOENT)
-			error = pefs_lookup_readdir(&enccn, filerev, dvp, cnp);
+			error = pefs_lookup_readdir(&enccn, gen, filerev, dvp, cnp);
 		if (error == ENOENT && (cnp->cn_flags & ISLASTCN) &&
 		    (cnp->cn_nameiop == CREATE || cnp->cn_nameiop == RENAME ||
 		    (cnp->cn_nameiop == DELETE &&
@@ -1679,6 +1687,7 @@ pefs_readdir(struct vop_readdir_args *ap)
 	struct pefs_chunk pc;
 	struct pefs_ctx *ctx;
 	size_t mem_size;
+	u_long gen;
 	u_quad_t filerev;
 	int error;
 	int r_ncookies = 0, r_ncookies_max = 0, ncookies = 0;
@@ -1703,13 +1712,15 @@ pefs_readdir(struct vop_readdir_args *ap)
 		a_cookies = &cookies;
 	}
 
-	filerev = pefs_getfilerev(vp, cred);
+	pefs_getgen_and_filerev(vp, cred, &gen, &filerev);
 	ctx = pefs_ctx_get();
 	pefs_chunk_create(&pc, pn, qmin(uio->uio_resid, DFLTPHYS));
 	pn_key = pefs_node_key(pn);
 	pefs_dircache_beginupdate(pn->pn_dircache);
-	if (!pefs_dircache_valid(pn->pn_dircache, filerev) || uio->uio_offset != 0)
+	if (!pefs_dircache_valid(pn->pn_dircache, gen, filerev) || uio->uio_offset != 0) {
+		gen = 0;
 		filerev = 0;
+	}
 	while (1) {
 		if (uio->uio_resid < pc.pc_size)
 			pefs_chunk_setsize(&pc, uio->uio_resid);
@@ -1766,8 +1777,8 @@ pefs_readdir(struct vop_readdir_args *ap)
 
 		pefs_chunk_restore(&pc);
 	}
-	if (*eofflag != 0 && error == 0 && filerev != 0)
-		pefs_dircache_endupdate(pn->pn_dircache, filerev);
+	if (*eofflag != 0 && error == 0 && gen != 0 && filerev != 0)
+		pefs_dircache_endupdate(pn->pn_dircache, gen, filerev);
 	else
 		pefs_dircache_abortupdate(pn->pn_dircache);
 
