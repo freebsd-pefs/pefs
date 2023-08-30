@@ -390,12 +390,7 @@ pefs_quotactl(struct mount *mp, int cmd, uid_t uid, void *arg)
 }
 #else
 static int
-pefs_quotactl(mp, cmd, uid, arg, mp_busy)
-	struct mount *mp;
-	int cmd;
-	uid_t uid;
-	void *arg;
-	bool *mp_busy;
+pefs_quotactl(struct mount *mp, int cmd, uid_t uid, void *arg, bool *mp_busy)
 {
 	struct mount *lowermp;
 	struct pefs_mount *mntdata;
