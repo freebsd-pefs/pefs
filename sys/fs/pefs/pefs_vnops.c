@@ -190,7 +190,9 @@ pefs_enccn_alloc(struct pefs_enccn *pec, struct componentname *cnp)
 	KASSERT(pec->pec_buf == NULL, ("pefs_enccn_alloc: buffer reuse\n"));
 	pec->pec_buf = uma_zalloc(namei_zone, M_WAITOK);
 	pec->pec_cn = *cnp;
+#if __FreeBSD_version < 1400068
 	pec->pec_cn.cn_flags |= HASBUF;
+#endif
 	pec->pec_cn.cn_pnbuf = pec->pec_buf;
 	pec->pec_cn.cn_nameptr = pec->pec_buf;
 #if __FreeBSD_version < 1100102
@@ -206,8 +208,10 @@ pefs_enccn_free(struct pefs_enccn *pec)
 		KASSERT(pec->pec_buf == pec->pec_cn.cn_pnbuf &&
 		    pec->pec_buf == pec->pec_cn.cn_nameptr,
 		    ("pefs_enccn_free: invalid buffer\n"));
+#if __FreeBSD_version < 1400068
 		KASSERT(pec->pec_cn.cn_flags & HASBUF,
 		    ("pefs_enccn_free: buffer is already freed\n"));
+#endif
 		uma_zfree(namei_zone, pec->pec_buf);
 		pec->pec_buf = NULL;
 		pec->pec_cn.cn_flags = 0;
@@ -652,10 +656,12 @@ pefs_lookup(struct vop_cachedlookup_args *ap)
 			 */
 			if (lvp == NULL)
 				error = pefs_lookup_lower(dvp, &lvp, &enccn.pec_cn);
-			if (error == 0 || error == EJUSTRETURN)
+			if (error == 0 || error == EJUSTRETURN) {
+#if __FreeBSD_version < 1400068
 				cnp->cn_flags = (cnp->cn_flags & HASBUF) |
 				    (enccn.pec_cn.cn_flags & ~HASBUF);
-			else
+#endif
+			} else
 				PEFSDEBUG("pefs_lookup: lower error = %d\n",
 				    error);
 		} else
@@ -663,9 +669,11 @@ pefs_lookup(struct vop_cachedlookup_args *ap)
 			    error);
 	}
 
+#if __FreeBSD_version < 1400068
 	if ((error == 0 || error == EJUSTRETURN) && (flags & ISLASTCN) &&
 	    cnp->cn_nameiop != LOOKUP)
 		cnp->cn_flags |= SAVENAME;
+#endif
 	if (error == ENOENT && (cnp->cn_flags & MAKEENTRY) &&
 	    cnp->cn_nameiop != CREATE)
 		cache_enter(dvp, NULLVP, cnp);
@@ -1066,9 +1074,18 @@ pefs_rename(struct vop_rename_args *ap)
 	struct mount *mp;
 	int error, lvp_ref;
 
-	KASSERT(tcnp->cn_flags & (SAVENAME | SAVESTART),
+	KASSERT(tcnp->cn_flags & (
+#if __FreeBSD_version < 1400068
+			SAVENAME |
+#endif
+			SAVESTART),
 	    ("pefs_rename: no name"));
-	KASSERT(fcnp->cn_flags & (SAVENAME | SAVESTART),
+	KASSERT(fcnp->cn_flags & (
+#if __FreeBSD_version < 1400068
+			SAVENAME |
+#else
+			SAVESTART),
+#endif
 	    ("pefs_rename: no name"));
 
 	lfdvp = PEFS_LOWERVP(fdvp);
@@ -1808,7 +1825,9 @@ pefs_mkdir(struct vop_mkdir_args *ap)
 	struct pefs_enccn enccn;
 	int error;
 
+#if __FreeBSD_version < 1400068
 	KASSERT(cnp->cn_flags & SAVENAME, ("pefs_mkdir: no name"));
+#endif
 	if (pefs_no_keys(dvp))
 		return (EROFS);
 	pefs_enccn_init(&enccn);
@@ -1839,7 +1858,9 @@ pefs_rmdir(struct vop_rmdir_args *ap)
 	struct pefs_enccn enccn;
 	int error;
 
+#if __FreeBSD_version < 1400068
 	KASSERT(cnp->cn_flags & SAVENAME, ("pefs_rmdir: no name"));
+#endif
 	if (pefs_no_keys(vp))
 		return (EROFS);
 	pefs_enccn_init(&enccn);
@@ -1872,7 +1893,9 @@ pefs_create(struct vop_create_args *ap)
 	struct pefs_enccn enccn;
 	int error;
 
+#if __FreeBSD_version < 1400068
 	KASSERT(cnp->cn_flags & SAVENAME, ("pefs_create: no name"));
+#endif
 	if (pefs_no_keys(dvp))
 		return (EROFS);
 	pefs_enccn_init(&enccn);
@@ -1903,7 +1926,9 @@ pefs_remove(struct vop_remove_args *ap)
 	struct pefs_enccn enccn;
 	int error;
 
+#if __FreeBSD_version < 1400068
 	KASSERT(cnp->cn_flags & SAVENAME, ("pefs_remove: no name"));
+#endif
 	if (pefs_no_keys(dvp))
 		return (EROFS);
 	pefs_enccn_init(&enccn);
@@ -1936,7 +1961,9 @@ pefs_link(struct vop_link_args *ap)
 	struct pefs_enccn enccn;
 	int error;
 
+#if __FreeBSD_version < 1400068
 	KASSERT(cnp->cn_flags & SAVENAME, ("pefs_link: no name"));
+#endif
 	if (dvp->v_mount != vp->v_mount)
 		return (EXDEV);
 	if ((pn->pn_flags & PN_HASKEY) == 0 || pefs_no_keys(vp))
@@ -1974,7 +2001,9 @@ pefs_symlink(struct vop_symlink_args *ap)
 	ldvp = PEFS_LOWERVP(dvp);
 	dpn = VP_TO_PN(dvp);
 
+#if __FreeBSD_version < 1400068
 	KASSERT(cnp->cn_flags & SAVENAME, ("pefs_symlink: no name"));
+#endif
 	if (pefs_no_keys(dvp))
 		return (EROFS);
 
@@ -2875,7 +2904,10 @@ pefs_setkey(struct vnode *vp, struct pefs_key *pk, struct ucred *cred,
 	cn.cn_thread = td;
 #endif
 	cn.cn_cred = cred;
-	cn.cn_flags = LOCKPARENT | LOCKLEAF | ISLASTCN | SAVENAME;
+	cn.cn_flags = LOCKPARENT | LOCKLEAF | ISLASTCN;
+#if __FreeBSD_version < 1400068
+	cn.cn_flags |= SAVENAME;
+#endif
 	cn.cn_lkflags = LK_EXCLUSIVE;
 	cn.cn_pnbuf = cn.cn_nameptr = namebuf + namelen;
 	cn.cn_namelen = MAXNAMLEN - 1 - namelen;
