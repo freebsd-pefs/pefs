@@ -1083,9 +1083,8 @@ pefs_rename(struct vop_rename_args *ap)
 	KASSERT(fcnp->cn_flags & (
 #if __FreeBSD_version < 1400068
 			SAVENAME |
-#else
-			SAVESTART),
 #endif
+			SAVESTART),
 	    ("pefs_rename: no name"));
 
 	lfdvp = PEFS_LOWERVP(fdvp);
