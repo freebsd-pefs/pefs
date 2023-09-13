@@ -1707,10 +1707,14 @@ pefs_readdir(struct vop_readdir_args *ap)
 	u_quad_t filerev;
 	int error;
 	int r_ncookies = 0, r_ncookies_max = 0, ncookies = 0;
-	u_long *r_cookies = NULL, *cookies = NULL;
 	int *a_ncookies;
+#if __FreeBSD_version > 1400044
+	uint64_t *r_cookies = NULL, *cookies = NULL;
+	uint64_t **a_cookies;
+#else
+	u_long *r_cookies = NULL, *cookies = NULL;
 	u_long **a_cookies;
-
+#endif
 	lvp = PEFS_LOWERVP(vp);
 	pn = VP_TO_PN(vp);
 
