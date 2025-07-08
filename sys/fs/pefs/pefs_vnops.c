@@ -2179,7 +2179,9 @@ lookupvpg:
 			 * likely to reclaim it.
 			 */
 			vm_page_reference(m);
+#ifdef PA_LOCKPTR
 			vm_page_lock(m);
+#endif
 			VM_OBJECT_WUNLOCK(vp->v_object);
 #if __FreeBSD_version >= 1200013 || defined(PEFS_OSREL_1200013_PAGE_SLEEP_XBUSY)
 			vm_page_busy_sleep(m, "pefsmr", true);
@@ -2189,26 +2191,34 @@ lookupvpg:
 			VM_OBJECT_WLOCK(vp->v_object);
 			goto lookupvpg;
 		}
+#ifdef PA_LOCKPTR
 		vm_page_lock(m);
+#endif
 #if __FreeBSD_version < 1300035
 		vm_page_hold(m);
 #else
 		vm_page_wire(m);
 #endif
+#ifdef PA_LOCKPTR
 		vm_page_unlock(m);
+#endif
 		VM_OBJECT_WUNLOCK(vp->v_object);
 		PEFSDEBUG("pefs_read: mapped: "
 		    "offset=0x%jx moffset=0x%jx msize=0x%jx\n",
 		    uio->uio_offset, (intmax_t)moffset, (intmax_t)msize);
 		error = uiomove_fromphys(&m, moffset, msize, uio);
 		VM_OBJECT_WLOCK(vp->v_object);
+#ifdef PA_LOCKPTR
 		vm_page_lock(m);
+#endif
 #if __FreeBSD_version < 1300035
 		vm_page_unhold(m);
 #else
 		vm_page_unwire(m, PQ_ACTIVE);
 #endif
+#ifdef PA_LOCKPTR
 		vm_page_unlock(m);
+#endif
 		VM_OBJECT_WUNLOCK(vp->v_object);
 		if (error != 0) {
 			MPASS(error != EJUSTRETURN);
@@ -2224,7 +2234,9 @@ lookupvpg:
 			 * likely to reclaim it.
 			 */
 			vm_page_reference(m);
+#ifdef PA_LOCKPTR
 			vm_page_lock(m);
+#endif
 			VM_OBJECT_WUNLOCK(vp->v_object);
 #if __FreeBSD_version >= 1200013 || defined(PEFS_OSREL_1200013_PAGE_SLEEP_XBUSY)
 			vm_page_busy_sleep(m, "pefsmr", true);
@@ -2524,7 +2536,9 @@ lookupvpg:
 			 */
 
 			vm_page_reference(m);
+#ifdef PA_LOCKPTR
 			vm_page_lock(m);
+#endif
 			VM_OBJECT_WUNLOCK(vp->v_object);
 #if __FreeBSD_version >= 1200013 || defined(PEFS_OSREL_1200013_PAGE_SLEEP_XBUSY)
 			vm_page_busy_sleep(m, "pefsmw", true);
