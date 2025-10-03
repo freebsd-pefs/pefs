@@ -676,7 +676,7 @@ pefs_lookup(struct vop_cachedlookup_args *ap)
 #endif
 	if (error == ENOENT && (cnp->cn_flags & MAKEENTRY) &&
 	    cnp->cn_nameiop != CREATE)
-		cache_enter(dvp, NULLVP, cnp);
+		cache_enter(dvp, NULL, cnp);
 	else if ((error == 0 || error == EJUSTRETURN) && lvp != NULL) {
 		if (ldvp == lvp) {
 			*ap->a_vpp = dvp;

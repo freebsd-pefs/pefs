@@ -189,7 +189,7 @@ pefs_nodehash_get(struct mount *mp, struct vnode *lowervp)
 		}
 	}
 	mtx_unlock(&pefs_node_listmtx);
-	return (NULLVP);
+	return (NULL);
 }
 
 /*
@@ -221,7 +221,7 @@ pefs_nodehash_insert(struct mount *mp, struct pefs_node *pn)
 	pefs_nodes++;
 	LIST_INSERT_HEAD(hd, pn, pn_listentry);
 	mtx_unlock(&pefs_node_listmtx);
-	return (NULLVP);
+	return (NULL);
 }
 
 static void
@@ -705,7 +705,7 @@ pefs_checkvp(struct vnode *vp, char *fil, int lno)
 {
 	int interlock = 0;
 	struct pefs_node *a = VP_TO_PN(vp);
-	if (a->pn_lowervp == NULLVP) {
+	if (a->pn_lowervp == NULL) {
 		/* Should never happen */
 		int i; u_long *p;
 		printf("vp = %p, ZERO ptr\n", (void *)vp);
