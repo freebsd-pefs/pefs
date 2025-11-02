@@ -680,7 +680,7 @@ pefs_lookup(struct vop_cachedlookup_args *ap)
 	else if ((error == 0 || error == EJUSTRETURN) && lvp != NULL) {
 		if (ldvp == lvp) {
 			*ap->a_vpp = dvp;
-			VREF(dvp);
+			vref(dvp);
 			vrele(lvp);
 		} else {
 			if (nokey_lookup)

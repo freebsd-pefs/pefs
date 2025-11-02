@@ -376,7 +376,7 @@ pefs_root(struct mount *mp, int flags, struct vnode **vpp)
 	 * Return locked reference to root.
 	 */
 	vp = VFS_TO_PEFS(mp)->pm_rootvp;
-	VREF(vp);
+	vref(vp);
 
 	vn_lock(vp, flags | LK_RETRY);
 	*vpp = vp;
