@@ -33,3 +33,8 @@ Installation instructions:
 # make obj all
 # make install
 # make clean
+
+To run the tests load the PEFS kld and run 'kyua test':
+# kldload pefs
+# cd tests/sbin
+# kuya test
