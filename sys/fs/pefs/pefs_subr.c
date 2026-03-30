@@ -456,7 +456,9 @@ pefs_node_get(struct mount *mp, struct vnode *lvp, struct vnode **vpp,
 	*vpp = vp;
 	MPASS(PEFS_LOWERVP(*vpp) == lvp);
 	ASSERT_VOP_LOCKED(*vpp, "pefs_node_get");
-
+#if __FreeBSD_version >= 1400077
+	vn_set_state(vp, VSTATE_CONSTRUCTED);
+#endif
 	return (0);
 }
 
