@@ -1140,8 +1140,13 @@ pefs_rename(struct vop_rename_args *ap)
 			vref(ltdvp);
 			if (ltvp != NULL)
 				vref(ltvp);
+#if __FreeBSD_version >= 1501000
+			error = VOP_RENAME(lfdvp, lfvp, fcnp, ltdvp, ltvp,
+			    tcnp, ap->a_flags);
+#else
 			error = VOP_RENAME(lfdvp, lfvp, fcnp, ltdvp, ltvp,
 			    tcnp);
+#endif
 			goto out_unlocked;
 		}
 		/* Target directory is encrypted. Files should be recreated. */
@@ -1253,8 +1258,13 @@ pefs_rename(struct vop_rename_args *ap)
 	    fenccn.pec_cn.cn_nameptr, fenccn.pec_cn.cn_namelen,
 	    0);
 
+#if __FreeBSD_version >= 1501000
+	error = VOP_RENAME(lfdvp, lfvp, &fenccn.pec_cn, ltdvp, ltvp,
+	    &tenccn.pec_cn, ap->a_flags);
+#else
 	error = VOP_RENAME(lfdvp, lfvp, &fenccn.pec_cn, ltdvp, ltvp,
 	    &tenccn.pec_cn);
+#endif
 
 	if (error == 0) {
 		cache_purge(fdvp);
@@ -2997,8 +3007,13 @@ pefs_setkey(struct vnode *vp, struct pefs_key *pk, struct ucred *cred,
 	}
 	vref(ldvp);
 	vref(ldvp);
+#if __FreeBSD_version >= 1501000
+	error = VOP_RENAME(ldvp, PEFS_LOWERVP(vp), &fenccn.pec_cn, ldvp, NULL,
+	    &tenccn.pec_cn, 0);
+#else
 	error = VOP_RENAME(ldvp, PEFS_LOWERVP(vp), &fenccn.pec_cn, ldvp, NULL,
 	    &tenccn.pec_cn);
+#endif
 #if __FreeBSD_version >= 900501
 	vrele(dvp); /* vref by vn_vptocnp */
 #else
