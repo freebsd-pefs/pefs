@@ -24,4 +24,5 @@
 syntax(2)
 test_suite('FreeBSD')
 atf_test_program{name='basic_test', required_user='root'}
+atf_test_program{name='exec_test', required_user='root'}
 atf_test_program{name='lock_test', required_user='root'}

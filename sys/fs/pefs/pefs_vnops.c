@@ -728,7 +728,13 @@ pefs_open(struct vop_open_args *ap)
 		if ((pn->pn_flags & PN_HASKEY) == 0)
 			vp->v_object = lvp->v_object;
 		else
-			vnode_create_vobject(vp, 0, ap->a_td);
+			vnode_create_vobject(vp,
+#ifdef VNODE_NO_SIZE
+					     VNODE_NO_SIZE
+#else
+					     0
+#endif
+					     , ap->a_td);
 	}
 	return (error);
 }

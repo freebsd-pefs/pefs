@@ -1,5 +1,6 @@
 PACKAGE=        tests
 ATF_TESTS_SH=   basic_test \
+		exec_test \
                 lock_test
 TESTSDIR=       ${TESTSBASE}/sbin/pefs
 
