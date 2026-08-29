@@ -1,4 +1,5 @@
 *.o
 *.ko
 *.pico
-
+.DS_Store
+.ccls-cache
